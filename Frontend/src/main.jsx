@@ -1,28 +1,13 @@
-// Frontend/src/App.jsx
 import React from 'react'
-import { Routes, Route } from 'react-router-dom'
-import { CssBaseline, Container, Box, Typography } from '@mui/material'
-import PDFUploader from './components/PDFUploader'
-import QueryInterface from './components/QueryInterface'
+import ReactDOM from 'react-dom/client'
+import { BrowserRouter } from 'react-router-dom'
+import App from './App.jsx'
+import './index.css'
 
-function App() {
-  return (
-    <>
-      <CssBaseline />
-      <Container maxWidth="lg">
-        <Box sx={{ my: 4 }}>
-          <Typography variant="h3" component="h1" gutterBottom align="center">
-            Scientific Literature Assistant
-          </Typography>
-          
-          <Routes>
-            <Route path="/" element={<PDFUploader />} />
-            <Route path="/query" element={<QueryInterface />} />
-          </Routes>
-        </Box>
-      </Container>
-    </>
-  )
-}
-
-export default App
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
+  </React.StrictMode>,
+)
