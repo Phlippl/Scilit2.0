@@ -41,7 +41,7 @@ import * as documentsApi from '../../api/documents';
 // Components
 import ProcessingSettings from './ProcessingSettings';
 import MetadataForm from './MetadataForm';
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '../../../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 
 const PDFUploader = () => {

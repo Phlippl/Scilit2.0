@@ -46,7 +46,7 @@ import Bibliography from './Bibliography';
 import FilterPanel from './FilterPanel';
 
 // Hooks
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '../../../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 
 const QueryInterface = () => {
