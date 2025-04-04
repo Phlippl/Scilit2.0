@@ -1,3 +1,4 @@
+// src/components/Login.jsx - Simplified version
 import React, { useState, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -6,12 +7,11 @@ import {
   Typography, 
   TextField, 
   Button, 
-  Link, 
   Alert, 
   CircularProgress 
 } from '@mui/material';
+import { Link as RouterLink } from 'react-router-dom';
 import { AuthContext } from '../App';
-import axios from 'axios';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -28,13 +28,7 @@ const Login = () => {
     setLoading(true);
     
     try {
-      // In a real app, you would connect this to your backend API
-      // For demo purposes, we'll simulate a successful login
-      
-      // Mock API call
-      // const response = await axios.post('/api/auth/login', { email, password });
-      
-      // Simulating a successful response
+      // Simulate a successful login with a delay
       setTimeout(() => {
         const userData = {
           id: '1',
@@ -51,7 +45,7 @@ const Login = () => {
         setLoading(false);
       }, 1000);
     } catch (error) {
-      setError(error.response?.data?.message || 'Login failed. Please check your credentials.');
+      setError('Login failed. Please check your credentials.');
       setLoading(false);
     }
   };
@@ -107,9 +101,11 @@ const Login = () => {
           </Button>
           
           <Box sx={{ textAlign: 'center', mt: 2 }}>
-            <Link href="/register" variant="body2">
-              {"Don't have an account? Sign Up"}
-            </Link>
+            <RouterLink to="/register" style={{ textDecoration: 'none' }}>
+              <Typography variant="body2" color="primary">
+                Don't have an account? Sign Up
+              </Typography>
+            </RouterLink>
           </Box>
         </Box>
       </Paper>

@@ -1,13 +1,28 @@
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import { BrowserRouter } from 'react-router-dom'
-import App from './App.jsx'
-import './index.css'
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import './index.css';
+import Home from './pages/Home';
+import Dashboard from './pages/Dashboard';
+import Login from './pages/Login';
 
-ReactDOM.createRoot(document.getElementById('root')).render(
+const App = React.lazy(() => import('./App.jsx'));
+
+const AppWithErrorHandling = () => (
+  <React.Suspense fallback={<div>Loading application...</div>}>
+    <App />
+  </React.Suspense>
+);
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
   <React.StrictMode>
     <BrowserRouter>
-      <App />
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/login" element={<Login />} />
+      </Routes>
     </BrowserRouter>
-  </React.StrictMode>,
-)
+  </React.StrictMode>
+);
