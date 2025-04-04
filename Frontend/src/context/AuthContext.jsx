@@ -15,6 +15,12 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Test user config from environment variables
+  const testUserEnabled = import.meta.env.VITE_TEST_USER_ENABLED === 'true';
+  const testUserEmail = import.meta.env.VITE_TEST_USER_EMAIL;
+  const testUserPassword = import.meta.env.VITE_TEST_USER_PASSWORD;
+  const testUserName = import.meta.env.VITE_TEST_USER_NAME;
+
   /**
    * Check authentication status on first load
    */
@@ -78,6 +84,37 @@ export const AuthProvider = ({ children }) => {
     setError(null);
     
     try {
+      // Check if test user is enabled and credentials match
+      if (testUserEnabled && 
+          credentials.email === testUserEmail && 
+          credentials.password === testUserPassword) {
+        
+        console.log('Using test user login');
+        
+        // Create mock user and token
+        const mockUser = {
+          id: 'test-user-id',
+          email: testUserEmail,
+          name: testUserName,
+          role: 'admin'
+        };
+        
+        const mockToken = 'test-user-token';
+        
+        // Store token and user data
+        localStorage.setItem('auth_token', mockToken);
+        localStorage.setItem('user_data', JSON.stringify(mockUser));
+        
+        // Set axios header for subsequent requests
+        apiClient.defaults.headers.common.Authorization = `Bearer ${mockToken}`;
+        
+        setUser(mockUser);
+        setIsAuthenticated(true);
+        
+        return mockUser;
+      }
+      
+      // Regular login if not using test user
       const response = await authApi.login(credentials);
       
       // Store token and user data
@@ -98,7 +135,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [testUserEnabled, testUserEmail, testUserPassword, testUserName]);
 
   /**
    * Handle registration
@@ -108,6 +145,20 @@ export const AuthProvider = ({ children }) => {
     setError(null);
     
     try {
+      // For test user, simulate successful registration and auto-login
+      if (testUserEnabled && userData.email === testUserEmail) {
+        console.log('Using test user registration');
+        
+        // Auto login after successful registration
+        await handleLogin({
+          email: userData.email,
+          password: userData.password
+        });
+        
+        return { success: true, user: { ...userData, id: 'test-user-id' } };
+      }
+      
+      // Regular registration flow
       const response = await authApi.register(userData);
       
       // Auto login after successful registration
@@ -124,7 +175,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [handleLogin]);
+  }, [handleLogin, testUserEnabled, testUserEmail]);
 
   /**
    * Handle logout

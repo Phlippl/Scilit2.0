@@ -1,7 +1,11 @@
 // src/api/documents.js
 import apiClient from './client';
+import mockService from '../utils/mockService';
 
 const DOCUMENTS_ENDPOINT = '/documents';
+
+// Prüfen, ob der Testmodus aktiviert ist
+const testUserEnabled = import.meta.env.VITE_TEST_USER_ENABLED === 'true';
 
 /**
  * Gets all documents for the current user
@@ -12,6 +16,12 @@ export const getDocuments = async () => {
     const response = await apiClient.get(DOCUMENTS_ENDPOINT);
     return response.data;
   } catch (error) {
+    // Im Testmodus Mock-Daten zurückgeben
+    if (testUserEnabled && (error.isTestMode || error.code === 'ERR_NETWORK')) {
+      console.log('Using mock documents data');
+      return mockService.documents;
+    }
+    
     console.error('Error fetching documents:', error);
     throw error.response?.data || { 
       message: 'Failed to retrieve documents' 
@@ -29,6 +39,14 @@ export const getDocumentById = async (id) => {
     const response = await apiClient.get(`${DOCUMENTS_ENDPOINT}/${id}`);
     return response.data;
   } catch (error) {
+    // Im Testmodus Mock-Daten zurückgeben
+    if (testUserEnabled && (error.isTestMode || error.code === 'ERR_NETWORK')) {
+      console.log('Using mock document data for ID:', id);
+      const doc = mockService.documents.find(d => d.id === id);
+      if (doc) return doc;
+      throw { message: 'Document not found' };
+    }
+    
     console.error(`Error fetching document (ID: ${id}):`, error);
     throw error.response?.data || { 
       message: 'Failed to retrieve document' 
@@ -66,6 +84,12 @@ export const saveDocument = async (documentData, file = null) => {
     
     return response.data;
   } catch (error) {
+    // Im Testmodus Mock-Daten zurückgeben
+    if (testUserEnabled && (error.isTestMode || error.code === 'ERR_NETWORK')) {
+      console.log('Using mock document save');
+      return mockService.saveDocument(documentData, file);
+    }
+    
     console.error('Error saving document:', error);
     throw error.response?.data || { 
       message: 'Failed to save document' 
@@ -85,6 +109,13 @@ export const updateDocument = async (id, documentData) => {
     const response = await apiClient.put(`${DOCUMENTS_ENDPOINT}/${id}`, documentData);
     return response.data;
   } catch (error) {
+    // Im Testmodus Mock-Daten zurückgeben
+    if (testUserEnabled && (error.isTestMode || error.code === 'ERR_NETWORK')) {
+      console.log('Using mock document update for ID:', id);
+      // Einfache Simulation eines Updates
+      return { id, ...documentData, updatedAt: new Date().toISOString() };
+    }
+    
     console.error(`Error updating document (ID: ${id}):`, error);
     throw error.response?.data || { 
       message: 'Failed to update document' 
@@ -103,6 +134,12 @@ export const deleteDocument = async (id) => {
     await apiClient.delete(`${DOCUMENTS_ENDPOINT}/${id}`);
     return true;
   } catch (error) {
+    // Im Testmodus Mock-Daten zurückgeben
+    if (testUserEnabled && (error.isTestMode || error.code === 'ERR_NETWORK')) {
+      console.log('Using mock document delete for ID:', id);
+      return true;
+    }
+    
     console.error(`Error deleting document (ID: ${id}):`, error);
     throw error.response?.data || { 
       message: 'Failed to delete document' 
