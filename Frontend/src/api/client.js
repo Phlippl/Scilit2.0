@@ -1,4 +1,4 @@
-// src/api/client.js - Basis-API-Client mit Konfiguration
+// src/api/client.js
 import axios from 'axios';
 
 // Basis-API-Client mit Konfiguration
@@ -15,7 +15,7 @@ apiClient.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('auth_token');
     if (token) {
-      config.headers['Authorization'] = `Bearer ${token}`;
+      config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
@@ -30,8 +30,14 @@ apiClient.interceptors.response.use(
     if (error.response && error.response.status === 401) {
       localStorage.removeItem('auth_token');
       localStorage.removeItem('user_data');
-      window.location.href = '/login';
+      
+      // Bei React Router v6: Optional einen globalen Event für Auth-Fehler auslösen
+      const authErrorEvent = new CustomEvent('auth:error', {
+        detail: { status: 401, message: 'Session abgelaufen' }
+      });
+      window.dispatchEvent(authErrorEvent);
     }
+    
     return Promise.reject(error);
   }
 );

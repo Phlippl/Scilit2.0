@@ -20,33 +20,30 @@ import {
   Alert,
   FormControlLabel,
   Switch,
-  useTheme,
   Grid,
-  Radio,
-  RadioGroup,
-  ButtonGroup
+  ButtonGroup,
+  useTheme,
+  Checkbox
 } from '@mui/material';
 
 // Icons
 import SearchIcon from '@mui/icons-material/Search';
-import SaveIcon from '@mui/icons-material/Save';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import BookmarkIcon from '@mui/icons-material/Bookmark';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import FilterListIcon from '@mui/icons-material/FilterList';
-import FormatQuoteIcon from '@mui/icons-material/FormatQuote';
 
-// Services
+// Komponenten
+import FilterPanel from './FilterPanel';
+import Bibliography from './Bibliography';
+import Results from './Results';
+
+// Services und APIs
 import * as queryApi from '../../api/query';
 import * as documentsApi from '../../api/documents';
 
-// Components
-import QueryResults from './QueryResults';
-import Bibliography from './Bibliography';
-import FilterPanel from './FilterPanel';
-
 // Hooks
-import { useAuth } from '../../../hooks/useAuth';
+import { useAuth } from '../../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 
 const QueryInterface = () => {
@@ -54,7 +51,7 @@ const QueryInterface = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   
-  // Query state
+  // Query-State
   const [query, setQuery] = useState('');
   const [documentFilters, setDocumentFilters] = useState([]);
   const [citationStyle, setCitationStyle] = useState('apa');
@@ -64,11 +61,11 @@ const QueryInterface = () => {
     { id: 'harvard', name: 'Harvard' }
   ]);
   
-  // Results state
+  // Ergebnis-State
   const [results, setResults] = useState([]);
   const [bibliography, setBibliography] = useState([]);
   
-  // UI state
+  // UI-State
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -80,26 +77,26 @@ const QueryInterface = () => {
   });
   const [lastQueryTime, setLastQueryTime] = useState(null);
   
-  // Get available documents and citation styles on component mount
+  // Verfügbare Dokumente und Zitationsstile beim Laden der Komponente abrufen
   useEffect(() => {
-    // Check authentication
+    // Authentifizierung prüfen
     if (!isAuthenticated) {
       navigate('/login', { state: { from: '/query' } });
       return;
     }
     
-    // Fetch available documents
+    // Verfügbare Dokumente abrufen
     const fetchDocuments = async () => {
       try {
         const docs = await documentsApi.getDocuments();
         setAvailableDocuments(docs);
       } catch (error) {
-        console.error('Error fetching documents:', error);
-        setError('Could not load your documents. Please try again later.');
+        console.error('Fehler beim Abrufen der Dokumente:', error);
+        setError('Dokumente konnten nicht geladen werden. Bitte versuche es später erneut.');
       }
     };
     
-    // Fetch available citation styles
+    // Verfügbare Zitationsstile abrufen
     const fetchCitationStyles = async () => {
       try {
         const styles = await queryApi.getSupportedCitationStyles();
@@ -107,8 +104,8 @@ const QueryInterface = () => {
           setAvailableStyles(styles);
         }
       } catch (error) {
-        console.error('Error fetching citation styles:', error);
-        // Keep default styles
+        console.error('Fehler beim Abrufen der Zitationsstile:', error);
+        // Standardstile beibehalten
       }
     };
     
@@ -117,7 +114,7 @@ const QueryInterface = () => {
   }, [isAuthenticated, navigate]);
   
   /**
-   * Handle query settings change
+   * Änderungen der Abfrageeinstellungen behandeln
    */
   const handleSettingsChange = (setting, value) => {
     setQuerySettings({
@@ -127,67 +124,67 @@ const QueryInterface = () => {
   };
   
   /**
-   * Handle document filter changes
+   * Änderungen der Dokumentfilter behandeln
    */
   const handleDocumentFilterChange = (selectedDocuments) => {
     setDocumentFilters(selectedDocuments);
   };
   
   /**
-   * Copy results to clipboard
+   * Ergebnisse in die Zwischenablage kopieren
    */
   const copyResultsToClipboard = () => {
     try {
-      // Format results and bibliography as text
+      // Ergebnisse und Bibliographie als Text formatieren
       const resultsText = results
         .map(result => `${result.text}\n(${result.source})`)
         .join('\n\n');
       
       const bibText = bibliography.length > 0 
-        ? '\n\nReferences\n' + bibliography.join('\n')
+        ? '\n\nLiteraturverzeichnis\n' + bibliography.join('\n')
         : '';
       
       const fullText = resultsText + bibText;
       
-      // Copy to clipboard
+      // In die Zwischenablage kopieren
       navigator.clipboard.writeText(fullText);
       
-      // Could add a success message here
+      // Erfolgsmeldung könnte hier hinzugefügt werden
     } catch (error) {
-      console.error('Error copying to clipboard:', error);
-      setError('Failed to copy results to clipboard');
+      console.error('Fehler beim Kopieren in die Zwischenablage:', error);
+      setError('Ergebnisse konnten nicht in die Zwischenablage kopiert werden');
     }
   };
   
   /**
-   * Save query and results
+   * Abfrage und Ergebnisse speichern
    */
   const saveQueryResults = async () => {
     try {
-      // This would save the query and results to the backend
-      // Not implemented in this example
-      console.log('Saving query results:', {
+      // Dies würde die Abfrage und Ergebnisse im Backend speichern
+      // In diesem Beispiel nicht implementiert
+      console.log('Speichere Abfrageergebnisse:', {
         query,
         results,
         bibliography,
         timestamp: new Date().toISOString()
       });
       
-      // Show success message
+      // Erfolgsmeldung anzeigen
     } catch (error) {
-      console.error('Error saving query:', error);
-      setError('Failed to save query results');
+      console.error('Fehler beim Speichern der Abfrage:', error);
+      setError('Abfrageergebnisse konnten nicht gespeichert werden');
     }
   };
   
   /**
-   * Handle query submission
+   * Abfrageübermittlung behandeln
    */
   const handleQuerySubmit = async (e) => {
     e.preventDefault();
     
     if (!query.trim()) {
-      setError('Please enter a query');
+      setError('Bitte gib eine Abfrage ein');
       return;
     }
     
@@ -209,13 +206,13 @@ const QueryInterface = () => {
       });
       
       const endTime = performance.now();
-      setLastQueryTime((endTime - startTime) / 1000); // Convert to seconds
+      setLastQueryTime((endTime - startTime) / 1000); // In Sekunden umrechnen
       
       setResults(response.results || []);
       setBibliography(response.bibliography || []);
     } catch (error) {
-      console.error('Error querying documents:', error);
-      setError(error.response?.data?.error || 'Error querying documents');
+      console.error('Fehler bei der Dokumentenabfrage:', error);
+      setError(error.response?.data?.error || 'Fehler bei der Dokumentenabfrage');
     } finally {
       setLoading(false);
     }
@@ -224,30 +221,30 @@ const QueryInterface = () => {
   return (
     <Paper elevation={3} sx={{ p: 3, mt: 4, maxWidth: 900, mx: 'auto' }}>
       <Typography variant="h5" component="h2" gutterBottom>
-        Query Your Literature
+        Literatur abfragen
       </Typography>
       
       <form onSubmit={handleQuerySubmit}>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mb: 3 }}>
           <TextField
-            label="Ask a question about your documents"
+            label="Stelle eine Frage zu deinen Dokumenten"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             fullWidth
             multiline
             rows={3}
             variant="outlined"
-            placeholder="e.g., What are the key findings on climate change impacts in agriculture?"
+            placeholder="z.B.: Was sind die wichtigsten Erkenntnisse zu Klimawandelauswirkungen in der Landwirtschaft?"
           />
           
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'flex-start' }}>
             <Box sx={{ minWidth: 200, flexGrow: 1 }}>
               <FormControl fullWidth size="small">
-                <InputLabel id="citation-style-label">Citation Style</InputLabel>
+                <InputLabel id="citation-style-label">Zitationsstil</InputLabel>
                 <Select
                   labelId="citation-style-label"
                   value={citationStyle}
-                  label="Citation Style"
+                  label="Zitationsstil"
                   onChange={(e) => setCitationStyle(e.target.value)}
                 >
                   {availableStyles.map((style) => (
@@ -260,14 +257,14 @@ const QueryInterface = () => {
             </Box>
             
             <Box sx={{ display: 'flex', gap: 1 }}>
-              <Tooltip title="Filter by specific documents">
+              <Tooltip title="Nach bestimmten Dokumenten filtern">
                 <Button
                   variant="outlined"
                   startIcon={<FilterListIcon />}
                   onClick={() => setShowFilters(!showFilters)}
                   color={documentFilters.length > 0 ? "primary" : "inherit"}
                 >
-                  Filters
+                  Filter
                   {documentFilters.length > 0 && (
                     <Chip 
                       label={documentFilters.length} 
@@ -287,76 +284,18 @@ const QueryInterface = () => {
                 disabled={loading || !query.trim()}
                 sx={{ flexGrow: 1 }}
               >
-                {loading ? 'Searching...' : 'Search'}
+                {loading ? 'Suche...' : 'Suchen'}
               </Button>
             </Box>
           </Box>
           
           {showFilters && (
-            <Paper variant="outlined" sx={{ p: 2, mt: 1 }}>
-              <Typography variant="subtitle2" gutterBottom>
-                Filter Documents
-              </Typography>
-              
-              {availableDocuments.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">
-                  No documents available. Upload documents first.
-                </Typography>
-              ) : (
-                <Grid container spacing={2}>
-                  <Grid item xs={12}>
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={documentFilters.length === 0}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setDocumentFilters([]);
-                            }
-                          }}
-                        />
-                      }
-                      label="Search all documents"
-                    />
-                  </Grid>
-                  
-                  {availableDocuments.map((doc) => (
-                    <Grid item xs={12} sm={6} key={doc.id}>
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={documentFilters.includes(doc.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setDocumentFilters([...documentFilters, doc.id]);
-                              } else {
-                                setDocumentFilters(documentFilters.filter(id => id !== doc.id));
-                              }
-                            }}
-                          />
-                        }
-                        label={doc.title}
-                      />
-                    </Grid>
-                  ))}
-                </Grid>
-              )}
-              
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
-                <Button 
-                  size="small" 
-                  onClick={() => setDocumentFilters(availableDocuments.map(doc => doc.id))}
-                >
-                  Select All
-                </Button>
-                <Button 
-                  size="small" 
-                  onClick={() => setDocumentFilters([])}
-                >
-                  Clear All
-                </Button>
-              </Box>
-            </Paper>
+            <FilterPanel
+              documents={availableDocuments}
+              selectedDocuments={documentFilters}
+              onFilterChange={handleDocumentFilterChange}
+              onClose={() => setShowFilters(false)}
+            />
           )}
           
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
@@ -370,8 +309,8 @@ const QueryInterface = () => {
               }
               label={
                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  <Typography variant="body2" sx={{ mr: 0.5 }}>Include direct quotes</Typography>
-                  <Tooltip title="When enabled, results may include exact quotes from the text. When disabled, all results will be paraphrased.">
+                  <Typography variant="body2" sx={{ mr: 0.5 }}>Direkte Zitate einbeziehen</Typography>
+                  <Tooltip title="Wenn aktiviert, können die Ergebnisse exakte Zitate aus dem Text enthalten. Wenn deaktiviert, werden alle Ergebnisse paraphrasiert.">
                     <HelpOutlineIcon fontSize="small" color="action" />
                   </Tooltip>
                 </Box>
@@ -388,8 +327,8 @@ const QueryInterface = () => {
               }
               label={
                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  <Typography variant="body2" sx={{ mr: 0.5 }}>Include page numbers</Typography>
-                  <Tooltip title="Include page numbers in citations when available">
+                  <Typography variant="body2" sx={{ mr: 0.5 }}>Seitenzahlen einbeziehen</Typography>
+                  <Tooltip title="Seitenzahlen in Zitaten einbeziehen, wenn verfügbar">
                     <HelpOutlineIcon fontSize="small" color="action" />
                   </Tooltip>
                 </Box>
@@ -397,7 +336,7 @@ const QueryInterface = () => {
             />
             
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <Typography variant="body2" sx={{ mr: 1 }}>Results:</Typography>
+              <Typography variant="body2" sx={{ mr: 1 }}>Ergebnisse:</Typography>
               <ButtonGroup size="small">
                 <Button 
                   variant={querySettings.maxResults === 3 ? "contained" : "outlined"}
@@ -429,26 +368,26 @@ const QueryInterface = () => {
         </Box>
       </form>
       
-      {/* Results section */}
+      {/* Ergebnisbereich */}
       {results.length > 0 && (
         <Box sx={{ mt: 3 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
             <Typography variant="h6">
-              Results
+              Ergebnisse
               {lastQueryTime && (
                 <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                  ({lastQueryTime.toFixed(2)} seconds)
+                  ({lastQueryTime.toFixed(2)} Sekunden)
                 </Typography>
               )}
             </Typography>
             
             <Box>
-              <Tooltip title="Copy results">
+              <Tooltip title="Ergebnisse kopieren">
                 <IconButton onClick={copyResultsToClipboard}>
                   <ContentCopyIcon />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="Save this query">
+              <Tooltip title="Diese Abfrage speichern">
                 <IconButton onClick={saveQueryResults}>
                   <BookmarkIcon />
                 </IconButton>
@@ -456,46 +395,19 @@ const QueryInterface = () => {
             </Box>
           </Box>
           
-          {results.map((result, index) => (
-            <Card key={index} sx={{ mb: 2, backgroundColor: '#f9f9f9' }}>
-              <CardContent>
-                <Typography variant="body1" paragraph>
-                  {result.text}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" align="right">
-                  {result.source}
-                </Typography>
-              </CardContent>
-            </Card>
-          ))}
+          <Results results={results} />
         </Box>
       )}
       
-      {/* Bibliography section */}
+      {/* Bibliographiebereich */}
       {bibliography.length > 0 && (
         <Box sx={{ mt: 4 }}>
           <Divider sx={{ mb: 2 }} />
           <Typography variant="h6" gutterBottom>
-            References
+            Literaturverzeichnis
           </Typography>
           
-          <Box component="ol" sx={{ pl: 2 }}>
-            {bibliography.map((citation, index) => (
-              <Typography 
-                component="li" 
-                key={index} 
-                variant="body2" 
-                paragraph
-                sx={{ 
-                  textIndent: '-1.5em', 
-                  paddingLeft: '1.5em',
-                  mb: 1.5 
-                }}
-              >
-                {citation}
-              </Typography>
-            ))}
-          </Box>
+          <Bibliography citations={bibliography} />
         </Box>
       )}
     </Paper>

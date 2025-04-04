@@ -1,5 +1,5 @@
 // src/components/pdf/FileUpload.jsx
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { 
   Button, 
   CircularProgress, 
@@ -35,8 +35,10 @@ import MetadataForm from './MetadataForm';
 
 // Hooks
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../hooks/useAuth';
 
 const FileUpload = () => {
+  const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   
   // File-State
@@ -76,6 +78,13 @@ const FileUpload = () => {
     'Metadaten prüfen', 
     'In Datenbank speichern'
   ];
+
+  // Authentifizierungsprüfung
+  useEffect(() => {
+    if (!isAuthenticated) {
+      navigate('/login', { state: { from: '/upload' } });
+    }
+  }, [isAuthenticated, navigate]);
   
   /**
    * Behandelt die Dateiauswahl
