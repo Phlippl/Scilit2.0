@@ -5,7 +5,7 @@ import axios from 'axios';
 const CROSSREF_API_BASE_URL = 'https://api.crossref.org';
 
 // Add polite parameter with your email for better rate limits
-// Replace with your actual email
+// Replace with your actual email when deploying
 const POLITE_POOL_EMAIL = 'your.email@example.com';
 
 /**
@@ -18,6 +18,8 @@ class CrossRefService {
    * @returns {Promise<Object>} - Promise resolving to the metadata object
    */
   async getMetadataByDOI(doi) {
+    if (!doi) return null;
+    
     try {
       // Encode the DOI to ensure it's URL-safe
       const encodedDOI = encodeURIComponent(doi);
@@ -25,23 +27,20 @@ class CrossRefService {
       
       const response = await axios.get(url, {
         headers: {
-          'User-Agent': `YourAppName/1.0 (${POLITE_POOL_EMAIL})`,
+          'User-Agent': `AcademicLiteratureAssistant/1.0 (${POLITE_POOL_EMAIL})`,
         },
         params: {
           mailto: POLITE_POOL_EMAIL,
         },
       });
       
-      return response.data.message;
+      if (response.status === 200 && response.data && response.data.message) {
+        return response.data.message;
+      }
+      return null;
     } catch (error) {
       console.error('Error fetching DOI metadata:', error);
-      if (error.response) {
-        // The request was made and the server responded with a status code
-        // that falls out of the range of 2xx
-        console.error('Response status:', error.response.status);
-        console.error('Response data:', error.response.data);
-      }
-      throw error;
+      return null;
     }
   }
   
@@ -51,6 +50,8 @@ class CrossRefService {
    * @returns {Promise<Array>} - Promise resolving to an array of matching works
    */
   async searchByISBN(isbn) {
+    if (!isbn) return [];
+    
     try {
       // Remove hyphens and spaces from ISBN
       const cleanISBN = isbn.replace(/[-\s]/g, '');
@@ -58,7 +59,7 @@ class CrossRefService {
       
       const response = await axios.get(url, {
         headers: {
-          'User-Agent': `YourAppName/1.0 (${POLITE_POOL_EMAIL})`,
+          'User-Agent': `AcademicLiteratureAssistant/1.0 (${POLITE_POOL_EMAIL})`,
         },
         params: {
           query: cleanISBN,
@@ -68,10 +69,13 @@ class CrossRefService {
         },
       });
       
-      return response.data.message.items;
+      if (response.status === 200 && response.data && response.data.message && response.data.message.items) {
+        return response.data.message.items;
+      }
+      return [];
     } catch (error) {
       console.error('Error searching by ISBN:', error);
-      throw error;
+      return [];
     }
   }
   
