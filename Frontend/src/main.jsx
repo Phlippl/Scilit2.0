@@ -2,9 +2,9 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import './index.css';
-import Home from './pages/Home';
-import Dashboard from './pages/Dashboard';
-import Login from './pages/Login';
+import Home from './pages/HomePage.jsx';
+import Dashboard from './pages/DashboardPage.jsx';
+import Login from './pages/LoginPage.jsx';
 
 const App = React.lazy(() => import('./App.jsx'));
 

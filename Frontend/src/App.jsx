@@ -1,8 +1,8 @@
-// src/App.jsx - Progressive implementation
-import React, { useState, Suspense } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
-import { ThemeProvider, createTheme } from '@mui/material/styles'
-import CssBaseline from '@mui/material/CssBaseline'
+// src/App.jsx
+import React from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
 import { 
   AppBar, 
   Toolbar, 
@@ -18,83 +18,65 @@ import {
   ListItemText,
   Divider,
   useMediaQuery
-} from '@mui/material'
+} from '@mui/material';
 
-// Icons - Import just what we need first
-import MenuIcon from '@mui/icons-material/Menu'
-import HomeIcon from '@mui/icons-material/Home'
-import AccountCircleIcon from '@mui/icons-material/AccountCircle'
+// Icons
+import MenuIcon from '@mui/icons-material/Menu';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
+import SearchIcon from '@mui/icons-material/Search';
+import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import HomeIcon from '@mui/icons-material/Home';
+import LogoutIcon from '@mui/icons-material/Logout';
+import DashboardIcon from '@mui/icons-material/Dashboard';
 
-// Create context for authentication
-export const AuthContext = React.createContext();
+// Pages
+import HomePage from './pages/HomePage';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
+import DashboardPage from './pages/DashboardPage';
+import UploadPage from './pages/UploadPage';
+import QueryPage from './pages/QueryPage';
 
-// Simple component placeholders
-const Home = () => (
-  <Box sx={{ textAlign: 'center', mt: 4 }}>
-    <Typography variant="h4" gutterBottom>
-      Welcome to Academic Literature Assistant
-    </Typography>
-    <Typography variant="body1" paragraph>
-      Upload academic papers, analyze them, and query your literature database.
-    </Typography>
-    <Button variant="contained" color="primary" href="/login">
-      Get Started
-    </Button>
-  </Box>
-);
+// Context
+import { AuthProvider } from './context/AuthContext';
+import { useAuth } from './hooks/useAuth';
 
-const SimplePlaceholder = ({ name }) => (
-  <Box sx={{ p: 4, textAlign: 'center' }}>
-    <Typography variant="h5">{name} Page</Typography>
-    <Typography variant="body1">This is a placeholder for the {name} component.</Typography>
-  </Box>
-);
+// Private Route component for authenticated routes
+const PrivateRoute = ({ children }) => {
+  const { isAuthenticated, loading } = useAuth();
+  
+  // Show loading state while checking authentication
+  if (loading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+  
+  return isAuthenticated ? children : <Navigate to="/login" />;
+};
 
-// Lazy-loaded components
-const LazyLogin = React.lazy(() => import('./components/Login'));
-const LazyRegister = React.lazy(() => import('./components/Register'));
-// We'll uncomment these as we confirm the app works
-// const LazyDashboard = React.lazy(() => import('./components/Dashboard'));
-// const LazyPDFUploader = React.lazy(() => import('./components/PDFUploader'));
-// const LazyQueryInterface = React.lazy(() => import('./components/QueryInterface'));
-
-function App() {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [user, setUser] = useState(null);
+// Navigation component
+const Navigation = () => {
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+  const { isAuthenticated, user, logout } = useAuth();
   const isMobile = useMediaQuery('(max-width:600px)');
-
-  const theme = createTheme({
-    palette: {
-      mode: 'light',
-      primary: {
-        main: '#1976d2',
-      },
-      secondary: {
-        main: '#dc004e',
-      },
-    },
-    typography: {
-      fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
-    },
-  });
-
+  
   const handleDrawerToggle = () => {
     setDrawerOpen(!drawerOpen);
   };
-
-  const handleLogin = (userData) => {
-    setIsAuthenticated(true);
-    setUser(userData);
-  };
-
+  
   const handleLogout = () => {
-    setIsAuthenticated(false);
-    setUser(null);
+    logout();
+    // Close drawer after logout on mobile
+    if (isMobile) {
+      setDrawerOpen(false);
+    }
   };
-
+  
   const drawer = (
-    <Box sx={{ width: 250 }} role="presentation" onClick={handleDrawerToggle}>
+    <Box sx={{ width: 250 }} role="presentation" onClick={() => isMobile && setDrawerOpen(false)}>
       <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         <Typography variant="h6" component="div">
           Literature Manager
@@ -113,9 +95,27 @@ function App() {
           <>
             <ListItem button component="a" href="/dashboard">
               <ListItemIcon>
-                <AccountCircleIcon />
+                <DashboardIcon />
               </ListItemIcon>
               <ListItemText primary="Dashboard" />
+            </ListItem>
+            <ListItem button component="a" href="/upload">
+              <ListItemIcon>
+                <UploadFileIcon />
+              </ListItemIcon>
+              <ListItemText primary="Upload Paper" />
+            </ListItem>
+            <ListItem button component="a" href="/query">
+              <ListItemIcon>
+                <SearchIcon />
+              </ListItemIcon>
+              <ListItemText primary="Query Literature" />
+            </ListItem>
+            <ListItem button onClick={handleLogout}>
+              <ListItemIcon>
+                <LogoutIcon />
+              </ListItemIcon>
+              <ListItemText primary="Logout" />
             </ListItem>
           </>
         ) : (
@@ -137,83 +137,106 @@ function App() {
       </List>
     </Box>
   );
+  
+  return (
+    <>
+      <AppBar position="sticky">
+        <Toolbar>
+          <IconButton
+            color="inherit"
+            aria-label="open drawer"
+            edge="start"
+            onClick={handleDrawerToggle}
+            sx={{ mr: 2 }}
+          >
+            <MenuIcon />
+          </IconButton>
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+            Academic Literature Assistant
+          </Typography>
+          {isAuthenticated ? (
+            <>
+              <Typography variant="body1" sx={{ mr: 2 }}>
+                {user?.name || 'User'}
+              </Typography>
+              <Button color="inherit" onClick={handleLogout}>Logout</Button>
+            </>
+          ) : (
+            <>
+              <Button color="inherit" href="/login">Login</Button>
+              <Button color="inherit" href="/register">Register</Button>
+            </>
+          )}
+        </Toolbar>
+      </AppBar>
+      
+      <Drawer
+        anchor="left"
+        open={drawerOpen}
+        onClose={handleDrawerToggle}
+      >
+        {drawer}
+      </Drawer>
+    </>
+  );
+};
+
+// Main App component
+function App() {
+  const theme = createTheme({
+    palette: {
+      mode: 'light',
+      primary: {
+        main: '#1976d2',
+      },
+      secondary: {
+        main: '#dc004e',
+      },
+    },
+    typography: {
+      fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
+    },
+  });
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, user, handleLogin, handleLogout }}>
+    <AuthProvider>
       <ThemeProvider theme={theme}>
         <CssBaseline />
         <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-          <AppBar position="sticky">
-            <Toolbar>
-              <IconButton
-                color="inherit"
-                aria-label="open drawer"
-                edge="start"
-                onClick={handleDrawerToggle}
-                sx={{ mr: 2 }}
-              >
-                <MenuIcon />
-              </IconButton>
-              <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                Academic Literature Assistant
-              </Typography>
-              {isAuthenticated ? (
-                <>
-                  <Typography variant="body1" sx={{ mr: 2 }}>
-                    {user?.name || 'User'}
-                  </Typography>
-                  <Button color="inherit" onClick={handleLogout}>Logout</Button>
-                </>
-              ) : (
-                <>
-                  <Button color="inherit" href="/login">Login</Button>
-                  <Button color="inherit" href="/register">Register</Button>
-                </>
-              )}
-            </Toolbar>
-          </AppBar>
-          
-          <Drawer
-            anchor="left"
-            open={drawerOpen}
-            onClose={handleDrawerToggle}
-          >
-            {drawer}
-          </Drawer>
+          <Navigation />
           
           <Container component="main" sx={{ flexGrow: 1, py: 4 }}>
             <Routes>
-              <Route path="/" element={<Home />} />
+              <Route path="/" element={<HomePage />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
               
-              <Route path="/login" element={
-                <Suspense fallback={<SimplePlaceholder name="Login" />}>
-                  {isAuthenticated ? <Navigate to="/dashboard" /> : <LazyLogin />}
-                </Suspense>
-              } />
+              <Route 
+                path="/dashboard" 
+                element={
+                  <PrivateRoute>
+                    <DashboardPage />
+                  </PrivateRoute>
+                } 
+              />
               
-              <Route path="/register" element={
-                <Suspense fallback={<SimplePlaceholder name="Register" />}>
-                  {isAuthenticated ? <Navigate to="/dashboard" /> : <LazyRegister />}
-                </Suspense>
-              } />
+              <Route 
+                path="/upload" 
+                element={
+                  <PrivateRoute>
+                    <UploadPage />
+                  </PrivateRoute>
+                } 
+              />
               
-              <Route path="/dashboard" element={
-                isAuthenticated ? 
-                <SimplePlaceholder name="Dashboard" /> : 
-                <Navigate to="/login" />
-              } />
-              
-              <Route path="/upload" element={
-                isAuthenticated ? 
-                <SimplePlaceholder name="PDF Uploader" /> : 
-                <Navigate to="/login" />
-              } />
-              
-              <Route path="/query" element={
-                isAuthenticated ? 
-                <SimplePlaceholder name="Query Interface" /> : 
-                <Navigate to="/login" />
-              } />
+              <Route 
+                path="/query" 
+                element={
+                  <PrivateRoute>
+                    <QueryPage />
+                  </PrivateRoute>
+                } 
+              />
             </Routes>
           </Container>
           
@@ -224,7 +247,7 @@ function App() {
           </Box>
         </Box>
       </ThemeProvider>
-    </AuthContext.Provider>
+    </AuthProvider>
   );
 }
 
