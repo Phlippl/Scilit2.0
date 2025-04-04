@@ -1,11 +1,11 @@
 // src/App.jsx
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { CircularProgress, Box } from '@mui/material';
+import { CircularProgress, Box, Typography } from '@mui/material';
 
-// Layout-Komponente
+// Layout Component
 import Navbar from './components/common/Navbar';
 
 // Pages
@@ -20,11 +20,11 @@ import QueryPage from './pages/QueryPage';
 import { AuthProvider } from './context/AuthContext';
 import { useAuth } from './hooks/useAuth';
 
-// PrivateRoute-Komponente für geschützte Routen
+// PrivateRoute component for protected routes
 const PrivateRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
   
-  // Zeige Ladebildschirm während Authentifizierungsprüfung
+  // Show loading screen during authentication check
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -36,7 +36,7 @@ const PrivateRoute = ({ children }) => {
   return isAuthenticated ? children : <Navigate to="/login" />;
 };
 
-// Hauptkomponente App
+// Main App component
 function App() {
   const theme = createTheme({
     palette: {
@@ -93,14 +93,14 @@ function App() {
                 } 
               />
               
-              {/* Fallback für ungültige Routen */}
+              {/* Fallback for invalid routes */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Box>
           
           <Box component="footer" sx={{ p: 2, mt: 'auto', backgroundColor: 'rgba(0, 0, 0, 0.05)' }}>
             <Typography variant="body2" color="text.secondary" align="center">
-              © {new Date().getFullYear()} SciLit2.0 - Wissenschaftliche Literaturverwaltung
+              © {new Date().getFullYear()} SciLit2.0 - Scientific Literature Management
             </Typography>
           </Box>
         </Box>
