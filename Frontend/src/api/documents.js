@@ -1,64 +1,64 @@
 // src/api/documents.js
 import apiClient from './client';
 
-const ENDPOINT = '/documents';
+const DOCUMENTS_ENDPOINT = '/documents';
 
 /**
- * Holt alle Dokumente des angemeldeten Benutzers
- * @returns {Promise<Array>} - Liste der Dokumente
+ * Gets all documents for the current user
+ * @returns {Promise<Array>} List of documents
  */
 export const getDocuments = async () => {
   try {
-    const response = await apiClient.get(ENDPOINT);
+    const response = await apiClient.get(DOCUMENTS_ENDPOINT);
     return response.data;
   } catch (error) {
-    console.error('Fehler beim Abrufen der Dokumente:', error);
+    console.error('Error fetching documents:', error);
     throw error.response?.data || { 
-      message: 'Dokumente konnten nicht abgerufen werden' 
+      message: 'Failed to retrieve documents' 
     };
   }
 };
 
 /**
- * Holt ein bestimmtes Dokument nach ID
- * @param {string} id - Dokument-ID
- * @returns {Promise<Object>} - Dokument-Daten
+ * Gets a specific document by ID
+ * @param {string} id - Document ID
+ * @returns {Promise<Object>} Document data
  */
 export const getDocumentById = async (id) => {
   try {
-    const response = await apiClient.get(`${ENDPOINT}/${id}`);
+    const response = await apiClient.get(`${DOCUMENTS_ENDPOINT}/${id}`);
     return response.data;
   } catch (error) {
-    console.error(`Fehler beim Abrufen des Dokuments (ID: ${id}):`, error);
+    console.error(`Error fetching document (ID: ${id}):`, error);
     throw error.response?.data || { 
-      message: 'Dokument konnte nicht abgerufen werden' 
+      message: 'Failed to retrieve document' 
     };
   }
 };
 
 /**
- * Speichert ein neues Dokument mit Metadaten und Dateiinhalt
+ * Saves a new document with metadata and file content
  * 
- * @param {Object} documentData - Dokument-Daten mit Metadaten
- * @param {File} [file] - Optionale PDF-Datei (falls noch nicht im documentData enthalten)
- * @returns {Promise<Object>} - Gespeichertes Dokument mit ID
+ * @param {Object} documentData - Document data with metadata
+ * @param {File} [file] - Optional PDF file (if not already included in documentData)
+ * @returns {Promise<Object>} Saved document with ID
  */
 export const saveDocument = async (documentData, file = null) => {
   try {
     let data = documentData;
     
-    // Wenn eine separate Datei übergeben wurde, erstelle FormData
+    // If a separate file was passed, create FormData
     if (file) {
       const formData = new FormData();
       formData.append('file', file);
       
-      // Füge documentData als JSON-String hinzu
+      // Add documentData as JSON string
       formData.append('data', JSON.stringify(documentData));
       
       data = formData;
     }
     
-    const response = await apiClient.post(ENDPOINT, data, {
+    const response = await apiClient.post(DOCUMENTS_ENDPOINT, data, {
       headers: file ? {
         'Content-Type': 'multipart/form-data'
       } : {}
@@ -66,46 +66,46 @@ export const saveDocument = async (documentData, file = null) => {
     
     return response.data;
   } catch (error) {
-    console.error('Fehler beim Speichern des Dokuments:', error);
+    console.error('Error saving document:', error);
     throw error.response?.data || { 
-      message: 'Dokument konnte nicht gespeichert werden' 
+      message: 'Failed to save document' 
     };
   }
 };
 
 /**
- * Aktualisiert ein bestehendes Dokument
+ * Updates an existing document
  * 
- * @param {string} id - Dokument-ID
- * @param {Object} documentData - Zu aktualisierende Daten
- * @returns {Promise<Object>} - Aktualisiertes Dokument
+ * @param {string} id - Document ID to update
+ * @param {Object} documentData - Updated document data
+ * @returns {Promise<Object>} Updated document
  */
 export const updateDocument = async (id, documentData) => {
   try {
-    const response = await apiClient.put(`${ENDPOINT}/${id}`, documentData);
+    const response = await apiClient.put(`${DOCUMENTS_ENDPOINT}/${id}`, documentData);
     return response.data;
   } catch (error) {
-    console.error(`Fehler beim Aktualisieren des Dokuments (ID: ${id}):`, error);
+    console.error(`Error updating document (ID: ${id}):`, error);
     throw error.response?.data || { 
-      message: 'Dokument konnte nicht aktualisiert werden' 
+      message: 'Failed to update document' 
     };
   }
 };
 
 /**
- * Löscht ein Dokument
+ * Deletes a document
  * 
- * @param {string} id - Dokument-ID
- * @returns {Promise<boolean>} - Erfolg
+ * @param {string} id - Document ID to delete
+ * @returns {Promise<boolean>} Success status
  */
 export const deleteDocument = async (id) => {
   try {
-    await apiClient.delete(`${ENDPOINT}/${id}`);
+    await apiClient.delete(`${DOCUMENTS_ENDPOINT}/${id}`);
     return true;
   } catch (error) {
-    console.error(`Fehler beim Löschen des Dokuments (ID: ${id}):`, error);
+    console.error(`Error deleting document (ID: ${id}):`, error);
     throw error.response?.data || { 
-      message: 'Dokument konnte nicht gelöscht werden' 
+      message: 'Failed to delete document' 
     };
   }
 };

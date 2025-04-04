@@ -18,8 +18,6 @@ import {
   DialogContent,
   DialogActions
 } from '@mui/material';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -31,16 +29,8 @@ const MetadataForm = ({ metadata, onChange }) => {
   const [editingAuthorIndex, setEditingAuthorIndex] = useState(-1);
 
   // Handle date change
-  const handleDateChange = (date) => {
-    try {
-      // Format the date as YYYY-MM-DD
-      const formattedDate = date ? new Date(date).toISOString().split('T')[0] : '';
-      onChange('publicationDate', formattedDate);
-    } catch (error) {
-      console.error('Error formatting date:', error);
-      // If there's an error, just pass the raw value
-      onChange('publicationDate', date?.toString() || '');
-    }
+  const handleDateChange = (e) => {
+    onChange('publicationDate', e.target.value);
   };
 
   // Open the author dialog for adding
@@ -92,17 +82,6 @@ const MetadataForm = ({ metadata, onChange }) => {
       ...prev,
       [field]: value
     }));
-  };
-
-  // Format publication date for display
-  const formatDate = (dateString) => {
-    if (!dateString) return '';
-    
-    try {
-      return new Date(dateString);
-    } catch (error) {
-      return '';
-    }
   };
 
   return (
@@ -174,15 +153,17 @@ const MetadataForm = ({ metadata, onChange }) => {
         </Grid>
 
         <Grid item xs={12} sm={6}>
-          <LocalizationProvider dateAdapter={AdapterDateFns}>
-            <DatePicker
-              label="Publication Date"
-              value={formatDate(metadata.publicationDate)}
-              onChange={handleDateChange}
-              renderInput={(params) => <TextField {...params} fullWidth />}
-              format="yyyy-MM-dd"
-            />
-          </LocalizationProvider>
+          <TextField
+            fullWidth
+            label="Publication Date"
+            type="date"
+            value={metadata.publicationDate || ''}
+            onChange={handleDateChange}
+            InputLabelProps={{
+              shrink: true,
+            }}
+            variant="outlined"
+          />
         </Grid>
 
         <Grid item xs={12} sm={6}>

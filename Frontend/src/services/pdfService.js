@@ -1,27 +1,21 @@
 // src/services/pdfService.js
 import * as pdfjs from 'pdfjs-dist';
-import { PDFWorker } from 'pdfjs-dist/build/pdf.worker.entry';
+import { createWorker } from 'tesseract.js';
 
-// Worker-Konfiguration
-try {
-  pdfjs.GlobalWorkerOptions.workerSrc = PDFWorker;
-} catch (e) {
-  console.warn('PDF.js Worker konnte nicht direkt geladen werden, Fallback zu CDN', e);
-  pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
-}
+// Set PDF.js worker source
+pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
 /**
- * Service für PDF-Verarbeitung mit Extraktion von Text, DOI und ISBN
+ * Comprehensive PDF Processing service with text extraction, OCR, metadata extraction and chunking
  */
 class PDFService {
   /**
-   * Extrahiert Text aus einer PDF-Datei
-   * 
-   * @param {File|Blob} pdfFile - Die PDF-Datei
-   * @param {Object} options - Optionen für die Extraktion
-   * @param {number} options.maxPages - Maximale Seitenzahl (0 = alle Seiten)
-   * @param {Function} options.progressCallback - Callback für Fortschrittsmeldungen
-   * @returns {Promise<Object>} - Promise mit dem extrahierten Text und Metadaten
+   * Extracts text from a PDF file with progress reporting
+   * @param {File|Blob} pdfFile - The PDF file
+   * @param {Object} options - Extraction options
+   * @param {number} options.maxPages - Maximum pages to scan (0 = all pages)
+   * @param {Function} options.progressCallback - Progress callback function (0-100)
+   * @returns {Promise<Object>} - Promise resolving to extracted text and page info
    */
   async extractText(pdfFile, options = {}) {
     const {
@@ -30,19 +24,19 @@ class PDFService {
     } = options;
     
     try {
-      // Fortschritt melden
+      // Report progress
       if (progressCallback) {
-        progressCallback('Lade PDF...', 0);
+        progressCallback('Loading PDF...', 0);
       }
       
       const arrayBuffer = await pdfFile.arrayBuffer();
       const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
       
-      // Bei maxPages 0 oder höher als tatsächlich, alle Seiten verarbeiten
+      // If maxPages is 0 or higher than actual, process all pages
       const pageCount = pdf.numPages;
       const pagesToProcess = maxPages > 0 ? Math.min(pageCount, maxPages) : pageCount;
       
-      // Ergebnisobjekt vorbereiten
+      // Prepare result object
       const result = {
         text: '',
         pages: [],
@@ -50,12 +44,12 @@ class PDFService {
         processedPages: pagesToProcess
       };
       
-      // Text von jeder Seite extrahieren
+      // Extract text from each page
       for (let i = 1; i <= pagesToProcess; i++) {
-        // Fortschritt melden
+        // Report progress
         if (progressCallback) {
           progressCallback(
-            `Verarbeite Seite ${i} von ${pagesToProcess}...`, 
+            `Processing page ${i} of ${pagesToProcess}...`, 
             Math.round((i - 1) / pagesToProcess * 100)
           );
         }
@@ -63,13 +57,13 @@ class PDFService {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
         
-        // Seitenabmessungen für Metadaten
+        // Get page dimensions for metadata
         const viewport = page.getViewport({ scale: 1.0 });
         
-        // Text extrahieren
+        // Extract text
         const pageText = textContent.items.map(item => item.str).join(' ');
         
-        // Zu Ergebnissen hinzufügen
+        // Add to results
         result.text += pageText + ' ';
         result.pages.push({
           pageNumber: i,
@@ -79,28 +73,98 @@ class PDFService {
         });
       }
       
-      // Abschluss-Fortschritt melden
+      // Final progress report
       if (progressCallback) {
-        progressCallback('Textextraktion abgeschlossen', 100);
+        progressCallback('Text extraction complete', 100);
       }
       
       return result;
     } catch (error) {
-      console.error('Fehler bei der Textextraktion aus PDF:', error);
-      throw new Error(`PDF-Textextraktion fehlgeschlagen: ${error.message}`);
+      console.error('Error extracting text from PDF:', error);
+      throw new Error(`PDF text extraction failed: ${error.message}`);
     }
   }
   
   /**
-   * Extrahiert DOI aus Text mittels Regex-Mustern
-   * 
-   * @param {string} text - Zu durchsuchender Text
-   * @returns {string|null} - Extrahierte DOI oder null, wenn nicht gefunden
+   * Perform OCR on PDF pages that have little or no text content
+   * @param {File|Blob} pdfFile - The PDF file
+   * @param {Array} pageNumbers - Page numbers to process (1-based indexing)
+   * @param {Function} progressCallback - Progress callback
+   * @returns {Promise<Object>} - Promise resolving to OCR results
+   */
+  async performOCR(pdfFile, pageNumbers = [], progressCallback = null) {
+    try {
+      // Initialize Tesseract worker
+      const worker = await createWorker('eng');
+      
+      // Convert PDF to image and perform OCR
+      const arrayBuffer = await pdfFile.arrayBuffer();
+      const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+      
+      // Default to first 3 pages if none specified
+      const pagesToProcess = pageNumbers.length > 0 
+        ? pageNumbers 
+        : Array.from({ length: Math.min(pdf.numPages, 3) }, (_, i) => i + 1);
+      
+      const results = [];
+      
+      for (let i = 0; i < pagesToProcess.length; i++) {
+        const pageNumber = pagesToProcess[i];
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 1.5 }); // Higher scale for better OCR
+        
+        // Create canvas for rendering
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        
+        // Render PDF page to canvas
+        await page.render({
+          canvasContext: context,
+          viewport: viewport
+        }).promise;
+        
+        // Convert canvas to blob
+        const blob = await new Promise(resolve => {
+          canvas.toBlob(resolve, 'image/png');
+        });
+        
+        // Perform OCR on the image
+        const { data } = await worker.recognize(blob);
+        
+        results.push({
+          pageNumber,
+          text: data.text
+        });
+        
+        // Report progress
+        if (progressCallback) {
+          progressCallback(Math.round((i + 1) / pagesToProcess.length * 100));
+        }
+      }
+      
+      await worker.terminate();
+      
+      return {
+        ocrResults: results,
+        combinedText: results.map(r => r.text).join(' ')
+      };
+    } catch (error) {
+      console.error('Error performing OCR:', error);
+      throw new Error(`OCR processing failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Extract DOI from text using regex patterns
+   * @param {string} text - Text to search for DOI
+   * @returns {string|null} - Extracted DOI or null if not found
    */
   extractDOI(text) {
     if (!text) return null;
     
-    // DOI-Regex-Muster - verbessert für bessere Trefferquote
+    // DOI regex pattern - improved for better matching
     // Format: 10.XXXX/XXXXX
     const doiPatterns = [
       /\b(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&'<>])\S)+)\b/i,
@@ -119,26 +183,25 @@ class PDFService {
   }
   
   /**
-   * Extrahiert ISBN aus Text mittels Regex-Mustern
-   * 
-   * @param {string} text - Zu durchsuchender Text
-   * @returns {string|null} - Extrahierte ISBN oder null, wenn nicht gefunden
+   * Extract ISBN from text using regex patterns
+   * @param {string} text - Text to search for ISBN
+   * @returns {string|null} - Extracted ISBN or null if not found
    */
   extractISBN(text) {
     if (!text) return null;
     
-    // ISBN-10 und ISBN-13 Regex-Muster
+    // ISBN-10 and ISBN-13 regex patterns - improved for better matching
     const isbnPatterns = [
       /\bISBN(?:-13)?[:\s]*(97[89][- ]?(?:\d[- ]?){9}\d)\b/i,  // ISBN-13
       /\bISBN(?:-10)?[:\s]*(\d[- ]?(?:\d[- ]?){8}[\dX])\b/i,   // ISBN-10
-      /\b(97[89][- ]?(?:\d[- ]?){9}\d)\b/i,  // Nackte ISBN-13
-      /\b(\d[- ]?(?:\d[- ]?){8}[\dX])\b/i    // Nackte ISBN-10
+      /\b(97[89][- ]?(?:\d[- ]?){9}\d)\b/i,  // Bare ISBN-13
+      /\b(\d[- ]?(?:\d[- ]?){8}[\dX])\b/i    // Bare ISBN-10
     ];
     
     for (const pattern of isbnPatterns) {
       const matches = text.match(pattern);
       if (matches && matches[1]) {
-        // ISBN-Format bereinigen und normalisieren
+        // Clean up and normalize ISBN format
         return matches[1].replace(/[-\s]/g, '');
       }
     }
@@ -147,12 +210,11 @@ class PDFService {
   }
   
   /**
-   * Teilt Dokumenttext in kleinere Chunks mit konfigurierbarer Größe und Überlappung
-   * 
-   * @param {string} text - Vollständiger Dokumenttext
-   * @param {number} chunkSize - Zielgröße der Chunks in Zeichen
-   * @param {number} overlapSize - Überlappungsgröße in Zeichen
-   * @returns {Array} - Array von Textchunks
+   * Split document text into smaller chunks with configurable size and overlap
+   * @param {string} text - Full document text
+   * @param {number} chunkSize - Target chunk size in characters
+   * @param {number} overlapSize - Overlap size in characters
+   * @returns {Array} - Array of text chunks
    */
   chunkText(text, chunkSize = 1000, overlapSize = 200) {
     if (!text || chunkSize <= 0) {
@@ -161,7 +223,7 @@ class PDFService {
     
     const chunks = [];
     
-    // Wenn Text kleiner als Chunk-Größe, als einzelnen Chunk zurückgeben
+    // If text is smaller than chunk size, return as single chunk
     if (text.length <= chunkSize) {
       return [text];
     }
@@ -169,25 +231,25 @@ class PDFService {
     let startIndex = 0;
     
     while (startIndex < text.length) {
-      // End-Index basierend auf Chunk-Größe berechnen
+      // Calculate end index based on chunk size
       let endIndex = startIndex + chunkSize;
       
-      // Wenn wir am Ende des Textes sind, einfach den restlichen Text verwenden
+      // If we're at the end of the text, just use the remaining text
       if (endIndex >= text.length) {
         chunks.push(text.substring(startIndex));
         break;
       }
       
-      // Versuche, einen natürlichen Breakpoint (Satz- oder Absatzende) zu finden
+      // Try to find a natural break point (sentence or paragraph end)
       const naturalBreakIndex = this.findNaturalBreakPoint(text, endIndex);
       
-      // Chunk hinzufügen mit dem natürlichen Breakpoint
+      // Add chunk using the natural break point
       chunks.push(text.substring(startIndex, naturalBreakIndex));
       
-      // Start-Index für nächsten Chunk verschieben, unter Berücksichtigung der Überlappung
+      // Move start index to next chunk, accounting for overlap
       startIndex = naturalBreakIndex - overlapSize;
       
-      // Sicherstellen, dass wir nicht rückwärts gehen
+      // Ensure we're not going backward
       if (startIndex < 0 || startIndex <= chunks.length) {
         startIndex = naturalBreakIndex;
       }
@@ -197,82 +259,81 @@ class PDFService {
   }
   
   /**
-   * Findet einen natürlichen Breakpoint (Satz- oder Absatzende) nahe dem Zielindex
-   * 
-   * @param {string} text - Zu analysierender Text
-   * @param {number} targetIndex - Zielindex
-   * @returns {number} - Index des natürlichen Breakpoints
+   * Find a natural break point (end of sentence or paragraph) near the target index
+   * @param {string} text - Text to analyze
+   * @param {number} targetIndex - Target index
+   * @returns {number} - Index of the natural break point
    */
   findNaturalBreakPoint(text, targetIndex) {
-    // Versuche, einen Absatzumbruch innerhalb von ±100 Zeichen des Ziels zu finden
+    // Try to find paragraph break within ±100 characters of target
     const paragraphSearchRange = 100;
     const paragraphStart = Math.max(0, targetIndex - paragraphSearchRange);
     const paragraphEnd = Math.min(text.length, targetIndex + paragraphSearchRange);
     
     const paragraphBreakSearch = text.substring(paragraphStart, paragraphEnd);
     
-    // Suche nach doppeltem Zeilenumbruch (Absatzumbruch)
+    // Look for double newline (paragraph break)
     const paragraphMatch = paragraphBreakSearch.match(/\n\s*\n/);
     
     if (paragraphMatch) {
       const matchIndex = paragraphMatch.index + paragraphStart;
-      // Stellen Sie sicher, dass wir nach dem Zielindex oder angemessen nahe sind
+      // Ensure we're after the target index or reasonably close
       if (matchIndex > targetIndex - 50) {
         return matchIndex;
       }
     }
     
-    // Versuche, ein Satzende innerhalb von ±50 Zeichen des Ziels zu finden
+    // Try to find sentence end within ±50 characters of target
     const sentenceSearchRange = 50;
     const sentenceStart = Math.max(0, targetIndex - sentenceSearchRange);
     const sentenceEnd = Math.min(text.length, targetIndex + sentenceSearchRange);
     
     const sentenceBreakSearch = text.substring(sentenceStart, sentenceEnd);
     
-    // Suche nach Satzende (Punkt, Fragezeichen, Ausrufezeichen gefolgt von Leerzeichen)
+    // Look for sentence end (period, question mark, exclamation mark followed by space)
     const sentenceMatch = sentenceBreakSearch.match(/[.!?]\s/);
     
     if (sentenceMatch) {
-      return sentenceMatch.index + sentenceStart + 2; // +2 um das Leerzeichen einzuschließen
+      return sentenceMatch.index + sentenceStart + 2; // +2 to include the space
     }
     
-    // Fallback: Suche nach dem nächsten Leerzeichen nach dem Zielindex
+    // Fallback: Look for the nearest space after the target index
     const spaceAfter = text.indexOf(' ', targetIndex);
     
     if (spaceAfter !== -1) {
-      return spaceAfter + 1; // +1 um das Leerzeichen zu überspringen
+      return spaceAfter + 1; // +1 to skip the space
     }
     
-    // Wenn alles andere fehlschlägt, einfach den Zielindex verwenden
+    // If all else fails, just use the target index
     return targetIndex;
   }
   
   /**
-   * Verarbeitet eine PDF-Datei, um Metadaten, Text und Chunks zu extrahieren
-   * 
-   * @param {File} file - Die PDF-Datei
-   * @param {Object} options - Verarbeitungsoptionen
-   * @returns {Promise<Object>} - Promise mit Verarbeitungsergebnissen
+   * Process a PDF file to extract metadata, text, and chunks
+   * @param {File} file - The PDF file
+   * @param {Object} options - Processing options
+   * @returns {Promise<Object>} - Promise resolving to processing results
    */
   async processFile(file, options = {}) {
     const {
       maxPages = 0,
       chunkSize = 1000,
       chunkOverlap = 200,
+      performOCR = false,
       progressCallback = null
     } = options;
     
     try {
-      // Fortschrittsberichts-Helfer
+      // Progress reporting helper
       const reportProgress = (stage, percent) => {
         if (progressCallback) {
           progressCallback(stage, percent);
         }
       };
       
-      reportProgress('Extrahiere Text aus PDF...', 0);
+      reportProgress('Extracting text from PDF...', 0);
       
-      // Text aus dem PDF extrahieren
+      // Extract text from the PDF
       const extractionResult = await this.extractText(
         file, 
         {
@@ -281,16 +342,39 @@ class PDFService {
         }
       );
       
-      // Identifikatoren extrahieren
-      reportProgress('Extrahiere Metadaten...', 0);
-      const doi = this.extractDOI(extractionResult.text);
-      const isbn = this.extractISBN(extractionResult.text);
+      // Extract identifiers
+      reportProgress('Extracting metadata...', 0);
+      let doi = this.extractDOI(extractionResult.text);
+      let isbn = this.extractISBN(extractionResult.text);
       
-      reportProgress('Erstelle Text-Chunks...', 0);
+      // If no text was found or identifiers couldn't be extracted, try OCR if enabled
+      let ocrText = '';
+      if (performOCR && ((!doi && !isbn) || extractionResult.text.trim().length < 100)) {
+        reportProgress('Performing OCR processing...', 0);
+        
+        // Only process first few pages to save time
+        const ocrResult = await this.performOCR(
+          file,
+          [1, 2, 3], // First 3 pages
+          (percent) => reportProgress('Performing OCR processing...', percent)
+        );
+        
+        ocrText = ocrResult.combinedText;
+        
+        // Try to extract identifiers from OCR text
+        doi = doi || this.extractDOI(ocrText);
+        isbn = isbn || this.extractISBN(ocrText);
+        
+        reportProgress('OCR processing complete', 100);
+      }
       
-      // Chunks erstellen
-      const chunks = this.chunkText(extractionResult.text, chunkSize, chunkOverlap);
-      reportProgress('Verarbeitung abgeschlossen', 100);
+      // Combine extracted text and OCR text
+      const fullText = extractionResult.text + ' ' + ocrText;
+      
+      // Create chunks
+      reportProgress('Creating text chunks...', 0);
+      const chunks = this.chunkText(fullText, chunkSize, chunkOverlap);
+      reportProgress('Processing complete', 100);
       
       return {
         fileName: file.name,
@@ -301,12 +385,12 @@ class PDFService {
           doi,
           isbn
         },
-        text: extractionResult.text,
+        text: fullText,
         chunks,
         pages: extractionResult.pages
       };
     } catch (error) {
-      console.error('Fehler bei der Verarbeitung der PDF-Datei:', error);
+      console.error('Error processing PDF file:', error);
       throw error;
     }
   }

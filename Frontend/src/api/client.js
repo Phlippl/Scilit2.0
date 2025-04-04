@@ -1,16 +1,16 @@
 // src/api/client.js
 import axios from 'axios';
 
-// Basis-API-Client mit Konfiguration
+// Base API client with configuration
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api', // Aus Umgebungsvariablen oder Standard
-  timeout: 30000, // 30 Sekunden Timeout für lange Operationen wie PDF-Verarbeitung
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api', // From environment variables or default
+  timeout: 30000, // 30 seconds timeout for long operations like PDF processing
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Request-Interceptor für Authentifizierung
+// Request interceptor for authentication
 apiClient.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('auth_token');
@@ -22,18 +22,18 @@ apiClient.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response-Interceptor für einheitliche Fehlerbehandlung
+// Response interceptor for unified error handling
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Automatisches Logout bei 401 (Unauthorized)
+    // Automatic logout on 401 (Unauthorized)
     if (error.response && error.response.status === 401) {
       localStorage.removeItem('auth_token');
       localStorage.removeItem('user_data');
       
-      // Bei React Router v6: Optional einen globalen Event für Auth-Fehler auslösen
+      // For React Router v6: Optionally trigger a global event for auth errors
       const authErrorEvent = new CustomEvent('auth:error', {
-        detail: { status: 401, message: 'Session abgelaufen' }
+        detail: { status: 401, message: 'Session expired' }
       });
       window.dispatchEvent(authErrorEvent);
     }

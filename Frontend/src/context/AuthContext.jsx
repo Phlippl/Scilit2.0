@@ -3,11 +3,11 @@ import React, { createContext, useState, useEffect, useCallback } from 'react';
 import * as authApi from '../api/auth';
 import apiClient from '../api/client';
 
-// Auth-Context erstellen
+// Create Auth Context
 export const AuthContext = createContext();
 
 /**
- * Auth-Provider für Authentifizierungszustand und -funktionen
+ * Auth Provider for authentication state and functions
  */
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -16,40 +16,40 @@ export const AuthProvider = ({ children }) => {
   const [error, setError] = useState(null);
 
   /**
-   * Beim ersten Laden den Auth-Status prüfen
+   * Check authentication status on first load
    */
   useEffect(() => {
     const checkAuthStatus = async () => {
       try {
-        // Token aus localStorage holen
+        // Get token from localStorage
         const token = localStorage.getItem('auth_token');
         
         if (token) {
-          // Axios-Default-Header setzen
+          // Set Axios default header
           apiClient.defaults.headers.common.Authorization = `Bearer ${token}`;
           
-          // Benutzerdaten holen
+          // Get user data
           const userData = JSON.parse(localStorage.getItem('user_data'));
           
           if (userData) {
             setUser(userData);
             setIsAuthenticated(true);
           } else {
-            // Wenn keine Benutzerdaten, aber Token vorhanden, versuche /me API
+            // If no user data but token exists, try /me API
             try {
               const response = await authApi.getCurrentUser();
               setUser(response.user);
               setIsAuthenticated(true);
               localStorage.setItem('user_data', JSON.stringify(response.user));
             } catch (userError) {
-              // Bei Fehler: Auth-Daten löschen
-              handleLogout(false); // Silent = true, keine API-Anfrage
+              // On error: Clear auth data
+              handleLogout(false); // Silent = true, no API request
             }
           }
         }
       } catch (err) {
-        console.error('Auth-Check-Fehler:', err);
-        // Potenziell ungültige Auth-Daten löschen
+        console.error('Auth check error:', err);
+        // Clear potentially invalid auth data
         handleLogout(false);
       } finally {
         setLoading(false);
@@ -58,7 +58,7 @@ export const AuthProvider = ({ children }) => {
 
     checkAuthStatus();
     
-    // Listener für Auth-Fehler (z.B. 401 von anderen API-Anfragen)
+    // Listener for auth errors (e.g., 401 from other API requests)
     const handleAuthError = (e) => {
       handleLogout(false);
     };
@@ -71,7 +71,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   /**
-   * Anmeldung behandeln
+   * Handle login
    */
   const handleLogin = useCallback(async (credentials) => {
     setLoading(true);
@@ -80,11 +80,11 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authApi.login(credentials);
       
-      // Token und Benutzerdaten speichern
+      // Store token and user data
       localStorage.setItem('auth_token', response.token);
       localStorage.setItem('user_data', JSON.stringify(response.user));
       
-      // Axios-Default-Header für nachfolgende Anfragen setzen
+      // Set Axios default header for subsequent requests
       apiClient.defaults.headers.common.Authorization = `Bearer ${response.token}`;
       
       setUser(response.user);
@@ -92,7 +92,7 @@ export const AuthProvider = ({ children }) => {
       
       return response.user;
     } catch (err) {
-      const errorMessage = err.response?.data?.message || err.message || 'Anmeldung fehlgeschlagen';
+      const errorMessage = err.response?.data?.message || err.message || 'Login failed';
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
@@ -101,7 +101,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   /**
-   * Registrierung behandeln
+   * Handle registration
    */
   const handleRegister = useCallback(async (userData) => {
     setLoading(true);
@@ -110,7 +110,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authApi.register(userData);
       
-      // Nach erfolgreicher Registrierung automatisch anmelden
+      // Auto login after successful registration
       await handleLogin({
         email: userData.email,
         password: userData.password
@@ -118,7 +118,7 @@ export const AuthProvider = ({ children }) => {
       
       return response;
     } catch (err) {
-      const errorMessage = err.response?.data?.message || err.message || 'Registrierung fehlgeschlagen';
+      const errorMessage = err.response?.data?.message || err.message || 'Registration failed';
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
@@ -127,20 +127,20 @@ export const AuthProvider = ({ children }) => {
   }, [handleLogin]);
 
   /**
-   * Abmeldung behandeln
+   * Handle logout
    * 
-   * @param {boolean} callApi - Flag, ob die Logout-API aufgerufen werden soll
+   * @param {boolean} callApi - Flag to call the logout API
    */
   const handleLogout = useCallback(async (callApi = true) => {
     if (callApi) {
       try {
         await authApi.logout();
       } catch (err) {
-        console.error('Logout-Fehler:', err);
+        console.error('Logout error:', err);
       }
     }
     
-    // Aufräumen unabhängig vom API-Erfolg
+    // Clean up regardless of API success
     localStorage.removeItem('auth_token');
     localStorage.removeItem('user_data');
     delete apiClient.defaults.headers.common.Authorization;
@@ -149,7 +149,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
   
   /**
-   * Benutzerdaten aktualisieren
+   * Update user data
    */
   const updateUserData = useCallback((newUserData) => {
     setUser(prev => {
@@ -159,7 +159,7 @@ export const AuthProvider = ({ children }) => {
     });
   }, []);
 
-  // Context-Wert erstellen
+  // Create context value
   const contextValue = {
     user,
     isAuthenticated,
