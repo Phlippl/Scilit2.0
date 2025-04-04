@@ -11,10 +11,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@emotion/react": "^11.11.4",
+    "@emotion/react": "^11.14.0",
     "@emotion/styled": "11.11.4",
-    "@mui/icons-material": "^5.15.12",
-    "@mui/material": "^5.15.12",
+    "@mui/icons-material": "^5.17.1",
+    "@mui/material": "^5.17.1",
     "axios": "^1.8.4",
     "pdf-lib": "^1.17.1",
     "pdf.js-extract": "^0.2.1",
