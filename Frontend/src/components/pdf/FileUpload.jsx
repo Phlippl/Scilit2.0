@@ -255,7 +255,7 @@ const FileUpload = () => {
       setSnackbarOpen(true);
       return;
     }
-
+  
     setProcessing(true);
     setProcessingStage('Speichere in Datenbank...');
     
@@ -278,14 +278,20 @@ const FileUpload = () => {
         }
       };
       
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('data', JSON.stringify(documentData));
+
       // In Datenbank speichern
-      await documentsApi.saveDocument(documentData, file);
+      const savedDoc = await documentsApi.saveDocument(documentData, file);
+    
+      console.log("Dokument erfolgreich gespeichert:", savedDoc);
       
       setSaveSuccess(true);
       setCurrentStep(3); // Zum finalen Schritt
     } catch (error) {
       console.error('Fehler beim Speichern des Dokuments:', error);
-      setError(`Fehler beim Speichern des Dokuments: ${error.message}`);
+      setError(`Fehler beim Speichern des Dokuments: ${error.message || 'Unbekannter Fehler'}`);
       setSnackbarOpen(true);
     } finally {
       setProcessing(false);

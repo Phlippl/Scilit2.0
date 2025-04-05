@@ -20,6 +20,10 @@ apiClient.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    
+    // Debugging: Log outgoing requests
+    console.log(`Request: ${config.method.toUpperCase()} ${config.url}`);
+    
     return config;
   },
   (error) => Promise.reject(error)
@@ -27,24 +31,31 @@ apiClient.interceptors.request.use(
 
 // Response interceptor for unified error handling
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Debugging: Log successful responses
+    console.log(`Response: ${response.status} ${response.config.url}`);
+    return response;
+  },
   (error) => {
     // Handle test user mode when API is not available
-    if (testUserEnabled && !error.response && error.code === 'ERR_NETWORK') {
+    if (testUserEnabled && (!error.response || error.code === 'ERR_NETWORK')) {
       console.warn('API not available, using test mode fallbacks');
       
-      const mockData = {
-        // Add default mock responses for important API endpoints
-        // Will be expanded in the mock service
-      };
-      
-      // Check if the URL matches any of our mock endpoints
-      // This will be handled by individual API modules
+      // Return with flag for test mode
       return Promise.reject({
         ...error,
         isTestMode: true
       });
     }
+    
+    // Log detailed error information
+    console.error('API Error:', {
+      url: error.config?.url,
+      method: error.config?.method,
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message
+    });
     
     // Automatic logout on 401 (Unauthorized)
     if (error.response && error.response.status === 401) {

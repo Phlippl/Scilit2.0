@@ -17,7 +17,7 @@ const DashboardPage = () => {
   const navigate = useNavigate();
   
   const { 
-    documents, 
+    documents = [], // Hier wird ein Default-Wert (leeres Array) zugewiesen
     isLoading, 
     error, 
     fetchDocuments, 
@@ -90,7 +90,7 @@ const DashboardPage = () => {
         <Typography color="error" align="center" sx={{ my: 4 }}>
           Error loading documents: {error}
         </Typography>
-      ) : documents.length === 0 ? (
+      ) : (!Array.isArray(documents) || documents.length === 0) ? (
         <NoDocuments />
       ) : (
         <Grid container spacing={3}>

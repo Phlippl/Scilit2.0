@@ -31,6 +31,7 @@ export const getDocuments = async () => {
 
 /**
  * Gets a specific document by ID
+  * Gets a specific document by ID
  * @param {string} id - Document ID
  * @returns {Promise<Object>} Document data
  */
@@ -54,6 +55,7 @@ export const getDocumentById = async (id) => {
   }
 };
 
+
 /**
  * Saves a new document with metadata and file content
  * 
@@ -64,6 +66,7 @@ export const getDocumentById = async (id) => {
 export const saveDocument = async (documentData, file = null) => {
   try {
     let data = documentData;
+    let headers = {};
     
     // If a separate file was passed, create FormData
     if (file) {
@@ -74,13 +77,17 @@ export const saveDocument = async (documentData, file = null) => {
       formData.append('data', JSON.stringify(documentData));
       
       data = formData;
+      // Let axios set the content type with boundary
+      headers = {
+        'Content-Type': 'multipart/form-data'
+      };
     }
     
-    const response = await apiClient.post(DOCUMENTS_ENDPOINT, data, {
-      headers: file ? {
-        'Content-Type': 'multipart/form-data'
-      } : {}
-    });
+    // Debug-Log
+    console.log('Saving document with data:', JSON.stringify(documentData).substring(0, 100) + '...');
+    console.log('File included:', !!file);
+    
+    const response = await apiClient.post(DOCUMENTS_ENDPOINT, data, { headers });
     
     return response.data;
   } catch (error) {

@@ -1,7 +1,7 @@
 // src/api/metadata.js
 import apiClient from './client';
 
-const API_URL = '/metadata';
+const API_URL = '/api/metadata';
 
 // Konfiguration für direkten CrossRef-Zugriff
 const CROSSREF_API_BASE_URL = 'https://api.crossref.org';
@@ -15,17 +15,25 @@ const CROSSREF_EMAIL = import.meta.env.VITE_CROSSREF_EMAIL || 'your.email@exampl
  */
 export const fetchDOIMetadata = async (doi) => {
   try {
-    const response = await apiClient.get(`${API_URL}/doi/${encodeURIComponent(doi)}`);
-    return response.data;
-  } catch (error) {
-    // Bei Backend-Fehler direkten CrossRef-Zugriff versuchen
-    if (error.response?.status === 404 || error.response?.status === 500) {
-      const crossrefData = await fetchDOIMetadataFromCrossRef(doi);
-      if (crossrefData) {
-        return formatCrossRefMetadata(crossrefData);
-      }
+    console.log(`Fetching DOI metadata for: ${doi}`);
+    
+    // Direkter CrossRef-Zugriff ohne Backend
+    const crossrefData = await fetchDOIMetadataFromCrossRef(doi);
+    if (crossrefData) {
+      return formatCrossRefMetadata(crossrefData);
     }
     
+    // Falls der direkte Zugriff nicht funktioniert, versuche es über das Backend
+    try {
+      const response = await apiClient.get(`${API_URL}/doi/${encodeURIComponent(doi)}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching DOI metadata from backend:', error);
+      // Fehler vom direkten Zugriff weitergeben, wenn beides fehlschlägt
+      throw { message: 'DOI-Metadaten konnten nicht abgerufen werden' };
+    }
+  } catch (error) {
+    console.error('Error fetching DOI metadata:', error);
     throw error.response?.data || { message: 'DOI-Metadaten konnten nicht abgerufen werden' };
   }
 };
@@ -38,17 +46,25 @@ export const fetchDOIMetadata = async (doi) => {
  */
 export const fetchISBNMetadata = async (isbn) => {
   try {
-    const response = await apiClient.get(`${API_URL}/isbn/${encodeURIComponent(isbn)}`);
-    return response.data;
-  } catch (error) {
-    // Bei Backend-Fehler direkten CrossRef-Zugriff versuchen
-    if (error.response?.status === 404 || error.response?.status === 500) {
-      const crossrefData = await searchByISBNFromCrossRef(isbn);
-      if (crossrefData && crossrefData.length > 0) {
-        return formatCrossRefMetadata(crossrefData[0]);
-      }
+    console.log(`Fetching ISBN metadata for: ${isbn}`);
+    
+    // Direkter CrossRef-Zugriff ohne Backend
+    const crossrefData = await searchByISBNFromCrossRef(isbn);
+    if (crossrefData && crossrefData.length > 0) {
+      return formatCrossRefMetadata(crossrefData[0]);
     }
     
+    // Falls der direkte Zugriff nicht funktioniert, versuche es über das Backend
+    try {
+      const response = await apiClient.get(`${API_URL}/isbn/${encodeURIComponent(isbn)}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching ISBN metadata from backend:', error);
+      // Fehler vom direkten Zugriff weitergeben, wenn beides fehlschlägt
+      throw { message: 'ISBN-Metadaten konnten nicht abgerufen werden' };
+    }
+  } catch (error) {
+    console.error('Error fetching ISBN metadata:', error);
     throw error.response?.data || { message: 'ISBN-Metadaten konnten nicht abgerufen werden' };
   }
 };
@@ -73,7 +89,8 @@ export const fetchDOIMetadataFromCrossRef = async (doi) => {
     });
     
     if (!response.ok) {
-      throw new Error(`CrossRef API Fehler: ${response.status}`);
+      console.warn(`CrossRef API error: ${response.status}`);
+      return null;
     }
     
     const data = await response.json();
@@ -83,7 +100,7 @@ export const fetchDOIMetadataFromCrossRef = async (doi) => {
     }
     return null;
   } catch (error) {
-    console.error('Fehler beim Abrufen der DOI-Metadaten von CrossRef:', error);
+    console.error('Error fetching DOI metadata from CrossRef:', error);
     return null;
   }
 };
@@ -109,7 +126,8 @@ export const searchByISBNFromCrossRef = async (isbn) => {
     });
     
     if (!response.ok) {
-      throw new Error(`CrossRef API Fehler: ${response.status}`);
+      console.warn(`CrossRef API error: ${response.status}`);
+      return [];
     }
     
     const data = await response.json();
@@ -119,7 +137,7 @@ export const searchByISBNFromCrossRef = async (isbn) => {
     }
     return [];
   } catch (error) {
-    console.error('Fehler bei der ISBN-Suche über CrossRef:', error);
+    console.error('Error searching ISBN from CrossRef:', error);
     return [];
   }
 };
@@ -187,7 +205,7 @@ export const formatCrossRefMetadata = (metadata) => {
     
     return result;
   } catch (error) {
-    console.error('Fehler beim Formatieren der Metadaten:', error);
+    console.error('Error formatting CrossRef metadata:', error);
     return null;
   }
 };

@@ -31,37 +31,31 @@ export const AuthProvider = ({ children }) => {
         const token = localStorage.getItem('auth_token');
         
         if (token) {
-          // Set Axios default header
+          // Ensure we have default headers set properly
           apiClient.defaults.headers.common.Authorization = `Bearer ${token}`;
           
           // Get user data
-          const userData = JSON.parse(localStorage.getItem('user_data'));
+          const userData = JSON.parse(localStorage.getItem('user_data') || 'null');
           
           if (userData) {
             setUser(userData);
             setIsAuthenticated(true);
+            setLoading(false);
           } else {
-            // If no user data but token exists, try /me API
-            try {
-              const response = await authApi.getCurrentUser();
-              setUser(response.user);
-              setIsAuthenticated(true);
-              localStorage.setItem('user_data', JSON.stringify(response.user));
-            } catch (userError) {
-              // On error: Clear auth data
-              handleLogout(false); // Silent = true, no API request
-            }
+            // Clear potentially invalid auth data
+            handleLogout(false);
+            setLoading(false);
           }
+        } else {
+          setLoading(false);
         }
       } catch (err) {
         console.error('Auth check error:', err);
-        // Clear potentially invalid auth data
         handleLogout(false);
-      } finally {
         setLoading(false);
       }
     };
-
+  
     checkAuthStatus();
     
     // Listener for auth errors (e.g., 401 from other API requests)
