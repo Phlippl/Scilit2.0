@@ -1,5 +1,5 @@
 // src/components/pdf/MetadataForm.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   TextField, 
   Box, 
@@ -16,67 +16,249 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogActions
+  DialogActions,
+  MenuItem,
+  Select,
+  FormControl,
+  InputLabel,
+  FormHelperText
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import PersonIcon from '@mui/icons-material/Person';
 
+/**
+ * Dynamisches Metadatenformular, das sich basierend auf dem Dokumenttyp anpasst
+ * 
+ * @param {Object} props - Komponenten-Props
+ * @param {Object} props.metadata - Metadaten des Dokuments
+ * @param {Function} props.onChange - Callback für Änderungen (field, value)
+ */
 const MetadataForm = ({ metadata, onChange }) => {
   const [authorDialogOpen, setAuthorDialogOpen] = useState(false);
   const [currentAuthor, setCurrentAuthor] = useState({ name: '', orcid: '' });
   const [editingAuthorIndex, setEditingAuthorIndex] = useState(-1);
-
-  // Handle date change
-  const handleDateChange = (e) => {
-    onChange('publicationDate', e.target.value);
+  
+  // Verfügbare Dokumenttypen
+  const documentTypes = [
+    { id: 'article', label: 'Zeitschriftenaufsatz' },
+    { id: 'book', label: 'Buch (Monographie)' },
+    { id: 'edited_book', label: 'Buch (Sammelwerk)' },
+    { id: 'conference', label: 'Tagungsband' },
+    { id: 'thesis', label: 'Hochschulschrift' },
+    { id: 'report', label: 'Graue Literatur / Bericht / Report' },
+    { id: 'newspaper', label: 'Zeitungsartikel' },
+    { id: 'website', label: 'Internetdokument' },
+    { id: 'interview', label: 'Interviewmaterial' },
+    { id: 'press', label: 'Pressemitteilung' },
+    { id: 'other', label: 'Unklarer Dokumententyp' }
+  ];
+  
+  // Dokumenttyp mit Fallback
+  const documentType = metadata.type || 'other';
+  
+  /**
+   * Konfigurationsobjekt für die dynamischen Felder basierend auf dem Dokumenttyp
+   */
+  const typeConfigs = {
+    article: [
+      { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
+      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
+      { id: 'journal', label: 'Zeitschrift', gridWidth: 6 },
+      { id: 'volume', label: 'Jahrgang', gridWidth: 3 },
+      { id: 'issue', label: 'Heftnummer', gridWidth: 3 },
+      { id: 'pages', label: 'Seiten von-bis', gridWidth: 3 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 3 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 },
+      { id: 'publisher', label: 'Verlag', gridWidth: 6 },
+      { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
+    ],
+    
+    book: [
+      { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
+      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
+      { id: 'publisher', label: 'Verlag', gridWidth: 6 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 3 },
+      { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 3 },
+      { id: 'edition', label: 'Auflage', gridWidth: 3 },
+      { id: 'isbn', label: 'ISBN', gridWidth: 6 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 },
+      { id: 'series', label: 'Reihentitel', gridWidth: 6 },
+      { id: 'seriesNumber', label: 'Bandnr. der Reihe', gridWidth: 3 },
+      { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
+    ],
+    
+    edited_book: [
+      { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
+      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
+      { id: 'publisher', label: 'Verlag', gridWidth: 6 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 3 },
+      { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 3 },
+      { id: 'edition', label: 'Auflage', gridWidth: 3 },
+      { id: 'isbn', label: 'ISBN', gridWidth: 6 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 },
+      { id: 'series', label: 'Reihentitel', gridWidth: 6 },
+      { id: 'seriesNumber', label: 'Bandnr. der Reihe', gridWidth: 3 },
+      { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
+    ],
+    
+    conference: [
+      { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
+      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
+      { id: 'conference', label: 'Tagungsname', gridWidth: 6 },
+      { id: 'conferenceLocation', label: 'Tagungsort', gridWidth: 6 },
+      { id: 'conferenceDate', label: 'Veranstaltungsdatum', gridWidth: 6 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 3 },
+      { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 3 },
+      { id: 'publisher', label: 'Verlag', gridWidth: 6 },
+      { id: 'isbn', label: 'ISBN', gridWidth: 6 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 },
+      { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
+    ],
+    
+    thesis: [
+      { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
+      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
+      { id: 'thesisType', label: 'Art der Schrift', gridWidth: 6 },
+      { id: 'publicationDate', label: 'Datum / Jahr', type: 'date', gridWidth: 6 },
+      { id: 'university', label: 'Hochschule', gridWidth: 6 },
+      { id: 'department', label: 'Institut', gridWidth: 6 },
+      { id: 'location', label: 'Hochschulort', gridWidth: 6 },
+      { id: 'advisor', label: 'Betreuer', gridWidth: 6 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 },
+      { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
+    ],
+    
+    report: [
+      { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
+      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
+      { id: 'institution', label: 'Institution', gridWidth: 6 },
+      { id: 'publicationDate', label: 'Datum / Jahr', type: 'date', gridWidth: 3 },
+      { id: 'location', label: 'Erscheinungsort', gridWidth: 3 },
+      { id: 'reportNumber', label: 'Nummer', gridWidth: 3 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 },
+      { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
+    ],
+    
+    newspaper: [
+      { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
+      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
+      { id: 'newspaper', label: 'Zeitung', gridWidth: 6 },
+      { id: 'publicationDate', label: 'Datum', type: 'date', gridWidth: 3 },
+      { id: 'location', label: 'Ort', gridWidth: 3 },
+      { id: 'edition', label: 'Ausgabe', gridWidth: 3 },
+      { id: 'pages', label: 'Seiten von-bis', gridWidth: 3 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 },
+      { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
+    ],
+    
+    website: [
+      { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
+      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
+      { id: 'url', label: 'Online-Adresse', gridWidth: 12 },
+      { id: 'institution', label: 'Institution', gridWidth: 6 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 3 },
+      { id: 'lastUpdated', label: 'Letzte Aktualisierung', type: 'date', gridWidth: 3 },
+      { id: 'accessDate', label: 'Zuletzt geprüft am', type: 'date', gridWidth: 6 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 },
+      { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
+    ],
+    
+    interview: [
+      { id: 'title', label: 'Titel / Thema', required: true, gridWidth: 12 },
+      { id: 'interviewer', label: 'Interviewer', gridWidth: 6 },
+      { id: 'interviewee', label: 'Interviewte Person', gridWidth: 6 },
+      { id: 'date', label: 'Datum', type: 'date', gridWidth: 3 },
+      { id: 'duration', label: 'Länge', gridWidth: 3 },
+      { id: 'location', label: 'Ort', gridWidth: 6 },
+      { id: 'medium', label: 'Medium', gridWidth: 6 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 }
+    ],
+    
+    press: [
+      { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
+      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
+      { id: 'institution', label: 'Institution', gridWidth: 6 },
+      { id: 'contactPerson', label: 'Kontaktperson', gridWidth: 6 },
+      { id: 'contactAddress', label: 'Kontaktadresse', gridWidth: 6 },
+      { id: 'date', label: 'Datum', type: 'date', gridWidth: 3 },
+      { id: 'location', label: 'Ort', gridWidth: 3 },
+      { id: 'embargo', label: 'Sperrfrist', gridWidth: 3 },
+      { id: 'url', label: 'Online-Adresse', gridWidth: 6 },
+      { id: 'accessDate', label: 'Zuletzt geprüft am', type: 'date', gridWidth: 6 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 }
+    ],
+    
+    // Fallback für unbekannte Dokumenttypen
+    other: [
+      { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
+      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
+      { id: 'publisher', label: 'Verlag', gridWidth: 6 },
+      { id: 'journal', label: 'Zeitschrift', gridWidth: 6 },
+      { id: 'publicationDate', label: 'Jahr/Datum', type: 'date', gridWidth: 3 },
+      { id: 'edition', label: 'Auflage', gridWidth: 3 },
+      { id: 'pages', label: 'Seiten von-bis', gridWidth: 3 },
+      { id: 'isbn', label: 'ISBN', gridWidth: 6 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 },
+      { id: 'url', label: 'Online-Adresse', gridWidth: 6 },
+      { id: 'accessDate', label: 'Zuletzt geprüft am', type: 'date', gridWidth: 6 },
+      { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
+    ]
   };
+  
+  // Aktive Konfiguration für den aktuellen Dokumenttyp
+  const activeConfig = typeConfigs[documentType] || typeConfigs.other;
 
-  // Open the author dialog for adding
+  // Typ des Dokuments ändern
+  const handleTypeChange = (event) => {
+    onChange('type', event.target.value);
+  };
+  
+  // Autor-Dialog öffnen für Hinzufügen
   const openAddAuthorDialog = () => {
     setCurrentAuthor({ name: '', orcid: '' });
     setEditingAuthorIndex(-1);
     setAuthorDialogOpen(true);
   };
 
-  // Open the author dialog for editing
+  // Autor-Dialog öffnen für Bearbeiten
   const openEditAuthorDialog = (author, index) => {
     setCurrentAuthor({ ...author });
     setEditingAuthorIndex(index);
     setAuthorDialogOpen(true);
   };
 
-  // Handle author dialog close
+  // Autor-Dialog schließen
   const handleAuthorDialogClose = () => {
     setAuthorDialogOpen(false);
   };
 
-  // Save author from dialog
+  // Autor aus Dialog speichern
   const saveAuthor = () => {
     if (!currentAuthor.name.trim()) return;
 
     if (editingAuthorIndex >= 0) {
-      // Update existing author
-      const updatedAuthors = [...metadata.authors];
+      // Vorhandenen Autor aktualisieren
+      const updatedAuthors = [...(metadata.authors || [])];
       updatedAuthors[editingAuthorIndex] = currentAuthor;
       onChange('authors', updatedAuthors);
     } else {
-      // Add new author
+      // Neuen Autor hinzufügen
       onChange('authors', [...(metadata.authors || []), currentAuthor]);
     }
 
     setAuthorDialogOpen(false);
   };
 
-  // Remove an author
+  // Autor entfernen
   const removeAuthor = (index) => {
-    const updatedAuthors = [...metadata.authors];
+    const updatedAuthors = [...(metadata.authors || [])];
     updatedAuthors.splice(index, 1);
     onChange('authors', updatedAuthors);
   };
 
-  // Update current author in dialog
+  // Aktuellen Autor im Dialog aktualisieren
   const updateCurrentAuthor = (field, value) => {
     setCurrentAuthor(prev => ({
       ...prev,
@@ -87,33 +269,50 @@ const MetadataForm = ({ metadata, onChange }) => {
   return (
     <Box>
       <Grid container spacing={3}>
+        {/* Dokumenttyp-Auswahl */}
         <Grid item xs={12}>
-          <TextField
-            required
-            fullWidth
-            label="Title"
-            value={metadata.title || ''}
-            onChange={(e) => onChange('title', e.target.value)}
-            variant="outlined"
-          />
+          <FormControl fullWidth>
+            <InputLabel id="document-type-label">Dokumententyp</InputLabel>
+            <Select
+              labelId="document-type-label"
+              id="document-type"
+              value={documentType}
+              label="Dokumententyp"
+              onChange={handleTypeChange}
+            >
+              {documentTypes.map((type) => (
+                <MenuItem key={type.id} value={type.id}>
+                  {type.label}
+                </MenuItem>
+              ))}
+            </Select>
+            <FormHelperText>
+              Wähle den passenden Dokumenttyp für die entsprechenden Metadatenfelder
+            </FormHelperText>
+          </FormControl>
         </Grid>
 
+        {/* Autorensektion */}
         <Grid item xs={12}>
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="subtitle1">Authors</Typography>
+              <Typography variant="subtitle1">
+                {documentType === 'edited_book' || documentType === 'conference' ? 'Herausgeber' : 'Autoren'}
+              </Typography>
               <Button 
                 startIcon={<AddIcon />} 
                 size="small" 
                 onClick={openAddAuthorDialog}
               >
-                Add Author
+                {documentType === 'edited_book' || documentType === 'conference' ? 'Herausgeber hinzufügen' : 'Autor hinzufügen'}
               </Button>
             </Box>
             
             {(!metadata.authors || metadata.authors.length === 0) ? (
               <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', mb: 1 }}>
-                No authors added yet
+                {documentType === 'edited_book' || documentType === 'conference' 
+                  ? 'Noch keine Herausgeber hinzugefügt' 
+                  : 'Noch keine Autoren hinzugefügt'}
               </Typography>
             ) : (
               <List dense>
@@ -152,90 +351,46 @@ const MetadataForm = ({ metadata, onChange }) => {
           </Paper>
         </Grid>
 
-        <Grid item xs={12} sm={6}>
-          <TextField
-            fullWidth
-            label="Publication Date"
-            type="date"
-            value={metadata.publicationDate || ''}
-            onChange={handleDateChange}
-            InputLabelProps={{
-              shrink: true,
-            }}
-            variant="outlined"
-          />
-        </Grid>
-
-        <Grid item xs={12} sm={6}>
-          <TextField
-            fullWidth
-            label="Publisher"
-            value={metadata.publisher || ''}
-            onChange={(e) => onChange('publisher', e.target.value)}
-            variant="outlined"
-          />
-        </Grid>
-
-        <Grid item xs={12} sm={6}>
-          <TextField
-            fullWidth
-            label="Journal/Publication"
-            value={metadata.journal || ''}
-            onChange={(e) => onChange('journal', e.target.value)}
-            variant="outlined"
-          />
-        </Grid>
-
-        <Grid item xs={12} sm={6}>
-          <TextField
-            fullWidth
-            label="DOI"
-            value={metadata.doi || ''}
-            onChange={(e) => onChange('doi', e.target.value)}
-            variant="outlined"
-            placeholder="10.XXXX/XXXXX"
-          />
-        </Grid>
-
-        <Grid item xs={12} sm={6}>
-          <TextField
-            fullWidth
-            label="ISBN"
-            value={metadata.isbn || ''}
-            onChange={(e) => onChange('isbn', e.target.value)}
-            variant="outlined"
-            placeholder="e.g., 9780123456789"
-          />
-        </Grid>
-
-        <Grid item xs={12}>
-          <TextField
-            fullWidth
-            label="Abstract"
-            value={metadata.abstract || ''}
-            onChange={(e) => onChange('abstract', e.target.value)}
-            variant="outlined"
-            multiline
-            rows={4}
-          />
-        </Grid>
+        {/* Dynamische Felder basierend auf dem Dokumenttyp */}
+        {activeConfig.map((field) => (
+          <Grid item xs={12} sm={field.gridWidth} key={field.id}>
+            <TextField
+              fullWidth
+              label={field.label}
+              type={field.type || 'text'}
+              required={field.required}
+              multiline={field.multiline}
+              rows={field.rows}
+              value={metadata[field.id] || ''}
+              onChange={(e) => onChange(field.id, e.target.value)}
+              variant="outlined"
+              InputLabelProps={field.type === 'date' ? {
+                shrink: true,
+              } : undefined}
+            />
+          </Grid>
+        ))}
       </Grid>
 
-      {/* Author Dialog */}
+      {/* Autor-Dialog */}
       <Dialog open={authorDialogOpen} onClose={handleAuthorDialogClose} fullWidth maxWidth="sm">
-        <DialogTitle>{editingAuthorIndex >= 0 ? 'Edit Author' : 'Add Author'}</DialogTitle>
+        <DialogTitle>
+          {editingAuthorIndex >= 0 
+            ? (documentType === 'edited_book' || documentType === 'conference' ? 'Herausgeber bearbeiten' : 'Autor bearbeiten') 
+            : (documentType === 'edited_book' || documentType === 'conference' ? 'Herausgeber hinzufügen' : 'Autor hinzufügen')}
+        </DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 1 }}>
             <TextField
               autoFocus
               margin="dense"
-              label="Author Name"
+              label="Name"
               fullWidth
               variant="outlined"
               value={currentAuthor.name || ''}
               onChange={(e) => updateCurrentAuthor('name', e.target.value)}
-              placeholder="Last Name, First Name"
-              helperText="Format: Lastname, Firstname"
+              placeholder="Nachname, Vorname"
+              helperText="Format: Nachname, Vorname"
             />
             <TextField
               margin="dense"
@@ -245,17 +400,78 @@ const MetadataForm = ({ metadata, onChange }) => {
               value={currentAuthor.orcid || ''}
               onChange={(e) => updateCurrentAuthor('orcid', e.target.value)}
               placeholder="0000-0000-0000-0000"
-              helperText="If available, enter the author's ORCID identifier"
+              helperText="Falls vorhanden, gib die ORCID-ID des Autors ein"
             />
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleAuthorDialogClose}>Cancel</Button>
-          <Button onClick={saveAuthor} variant="contained">Save</Button>
+          <Button onClick={handleAuthorDialogClose}>Abbrechen</Button>
+          <Button onClick={saveAuthor} variant="contained">Speichern</Button>
         </DialogActions>
       </Dialog>
     </Box>
   );
+};
+
+/**
+ * Extrahiert den wahrscheinlichen Dokumenttyp aus Metadaten
+ * 
+ * @param {Object} metadata - Die abgefragten Metadaten
+ * @returns {string} - Der vermutete Dokumenttyp
+ */
+export const detectDocumentType = (metadata) => {
+  if (!metadata) return 'other';
+  
+  // DOI vorhanden und beginnt mit 10.
+  if (metadata.doi && metadata.doi.startsWith('10.')) {
+    // Zeitschriftenartikel prüfen
+    if (metadata.journal || metadata.issn) {
+      return 'article';
+    }
+    
+    // Konferenzbeitrag prüfen
+    if (metadata.conference || (metadata.publisher && metadata.title && metadata.title.toLowerCase().includes('proceedings'))) {
+      return 'conference';
+    }
+  }
+  
+  // ISBN prüfen für Bücher
+  if (metadata.isbn) {
+    // Herausgegebenes Buch vs. Monographie
+    if (metadata.editors && metadata.editors.length > 0) {
+      return 'edited_book';
+    } else {
+      return 'book';
+    }
+  }
+  
+  // Hochschulschrift prüfen
+  if (metadata.thesisType || (metadata.title && 
+      (metadata.title.toLowerCase().includes('dissertation') || 
+       metadata.title.toLowerCase().includes('thesis') ||
+       metadata.title.toLowerCase().includes('masterarbeit') ||
+       metadata.title.toLowerCase().includes('bachelorarbeit')))) {
+    return 'thesis';
+  }
+  
+  // Zeitungsartikel prüfen
+  if (metadata.newspaper || (metadata.publisher && 
+      (metadata.publisher.toLowerCase().includes('zeitung') || 
+       metadata.publisher.toLowerCase().includes('news')))) {
+    return 'newspaper';
+  }
+  
+  // Fallback: Wenn Journal vorhanden, dann Artikel
+  if (metadata.journal) {
+    return 'article';
+  }
+  
+  // Fallback: Wenn Verlag vorhanden, dann Buch
+  if (metadata.publisher) {
+    return 'book';
+  }
+  
+  return 'other';
 };
 
 export default MetadataForm;

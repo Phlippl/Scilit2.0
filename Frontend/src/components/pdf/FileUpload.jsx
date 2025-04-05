@@ -31,7 +31,7 @@ import pdfService from '../../services/pdfService';
 import * as metadataApi from '../../api/metadata';
 import * as documentsApi from '../../api/documents';
 import ProcessingSettings from './ProcessingSettings';
-import MetadataForm from './MetadataForm';
+import MetadataForm, { detectDocumentType } from './MetadataForm';
 
 // Hooks
 import { useNavigate } from 'react-router-dom';
@@ -164,7 +164,14 @@ const FileUpload = () => {
           }
           
           if (fetchedMetadata) {
-            setMetadata(fetchedMetadata);
+            // Dokumenttyp erkennen und setzen
+            const detectedType = detectDocumentType(fetchedMetadata);
+            
+            // Metadaten mit Dokumenttyp setzen
+            setMetadata({
+              ...fetchedMetadata,
+              type: detectedType
+            });
           } else {
             // Leere Metadatenstruktur erstellen
             setMetadata({
@@ -175,7 +182,8 @@ const FileUpload = () => {
               journal: '',
               doi: result.metadata.doi || '',
               isbn: result.metadata.isbn || '',
-              abstract: ''
+              abstract: '',
+              type: 'other' // Standard-Dokumenttyp
             });
           }
         } catch (metadataError) {
@@ -190,25 +198,28 @@ const FileUpload = () => {
             journal: '',
             doi: result.metadata.doi || '',
             isbn: result.metadata.isbn || '',
-            abstract: ''
+            abstract: '',
+            type: 'other' // Standard-Dokumenttyp
           });
         }
-      } else {
-        // Wenn keine Identifikatoren gefunden wurden
-        setMetadata({
-          title: '',
-          authors: [],
-          publicationDate: '',
-          publisher: '',
-          journal: '',
-          doi: '',
-          isbn: '',
-          abstract: ''
-        });
-        
-        setError('Keine DOI oder ISBN konnte aus dem Dokument extrahiert werden. Bitte gib die Metadaten manuell ein.');
-        setSnackbarOpen(true);
-      }
+  
+          } else {
+          // Wenn keine Identifikatoren gefunden wurden
+          setMetadata({
+            title: '',
+            authors: [],
+            publicationDate: '',
+            publisher: '',
+            journal: '',
+            doi: '',
+            isbn: '',
+            abstract: '',
+            type: 'other' // Standard-Dokumenttyp
+          });
+          
+          setError('Keine DOI oder ISBN konnte aus dem Dokument extrahiert werden. Bitte gib die Metadaten manuell ein.');
+          setSnackbarOpen(true);
+        }
       
       setProcessingStage('Verarbeitung abgeschlossen');
       setProcessingProgress(100);
