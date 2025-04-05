@@ -26,14 +26,14 @@ export default defineConfig({
       overlay: true,
     },
     // Commenting out proxy until backend is ready
-    /*
+    
     proxy: {
       '/api': {
         target: 'http://localhost:5000',
         changeOrigin: true,
       },
     },
-    */
+    
   },
   // Add specific build options that can help with debugging
   build: {
