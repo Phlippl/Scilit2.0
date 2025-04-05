@@ -1,28 +1,40 @@
 # Backend/services/pdf_processor.py
 import os
 import re
-import fitz  # PyMuPDF
-import spacy
 import logging
 import tempfile
 from pathlib import Path
 import pytesseract
 from PIL import Image
+import io
 import numpy as np
 
-logger = logging.getLogger(__name__)
-
-# Prüfen, ob Spacy-Modell installiert ist und laden
+# PyMuPDF Importierung
 try:
-    nlp = spacy.load("de_core_news_sm")
-    logger.info("Spacy model loaded: de_core_news_sm")
-except:
+    import fitz  # PyMuPDF
+except ImportError:
     try:
-        nlp = spacy.load("en_core_web_sm")
-        logger.info("Spacy model loaded: en_core_web_sm")
+        import PyMuPDF as fitz
+    except ImportError:
+        raise ImportError("PyMuPDF nicht gefunden. Bitte installieren Sie es mit: pip install PyMuPDF")
+
+# spaCy Importierung
+try:
+    import spacy
+    logger = logging.getLogger(__name__)
+    # Prüfen, ob Spacy-Modell installiert ist und laden
+    try:
+        nlp = spacy.load("de_core_news_sm")
+        logger.info("Spacy model loaded: de_core_news_sm")
     except:
-        logger.warning("No spacy language model found. Using blank model.")
-        nlp = spacy.blank("en")
+        try:
+            nlp = spacy.load("en_core_web_sm")
+            logger.info("Spacy model loaded: en_core_web_sm")
+        except:
+            logger.warning("No spacy language model found. Using blank model.")
+            nlp = spacy.blank("en")
+except ImportError:
+    raise ImportError("Spacy nicht gefunden. Bitte installieren Sie es mit: pip install spacy")
 
 
 class PDFProcessor:
@@ -150,7 +162,6 @@ class PDFProcessor:
                 pix = page.get_pixmap(matrix=fitz.Matrix(dpi/72, dpi/72))
                 
                 # Als Bild speichern
-                import io
                 img_data = pix.tobytes("png")
                 img = Image.open(io.BytesIO(img_data))
                 
@@ -283,7 +294,7 @@ class PDFProcessor:
             start_index = end_index - overlap_size
             
             # Sicherstellen, dass wir nicht rückwärts gehen
-            if start_index <= 0 or start_index <= chunks[-1]:
+            if start_index <= 0 or start_index >= end_index:
                 start_index = end_index
         
         return chunks
@@ -357,9 +368,19 @@ class PDFProcessor:
                                 sentence_chunk = [sentence]
                                 sentence_size = sent_size
                     
-                            # Restlichen Satz-Chunk speichern, wenn vorhanden
-                    if sentence_size > 0:
+                    # Restlichen Satz-Chunk speichern, wenn vorhanden
+                    if sentence_chunk:
                         chunks.append(' '.join(sentence_chunk))
+                
+                # Normaler Fall: Absatz passt potenziell in einen Chunk
+                elif current_size + para_size <= chunk_size:
+                    current_chunk.append(paragraph)
+                    current_size += para_size
+                else:
+                    # Aktuellen Chunk abschließen und neuen beginnen
+                    chunks.append(' '.join(current_chunk))
+                    current_chunk = [paragraph]
+                    current_size = para_size
             
             # Letzten Chunk hinzufügen, falls vorhanden
             if current_chunk:
@@ -387,13 +408,3 @@ class PDFProcessor:
             logger.error(f"Error in semantic chunking: {e}")
             # Fallback zur einfachen Chunking-Methode
             return PDFProcessor.chunk_text(text, chunk_size, overlap_size)
-                
-                # Normaler Fall: Absatz passt potenziell in einen Chunk
-                elif current_size + para_size <= chunk_size:
-                    current_chunk.append(paragraph)
-                    current_size += para_size
-                else:
-                    # Aktuellen Chunk abschließen und neuen beginnen
-                    chunks.append(' '.join(current_chunk))
-                    current_chunk = [paragraph]
-                    current_size = para_size

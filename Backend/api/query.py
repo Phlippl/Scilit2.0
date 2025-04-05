@@ -2,6 +2,9 @@
 import os
 import json
 import logging
+import re
+import uuid
+from datetime import datetime
 from flask import Blueprint, jsonify, request, current_app
 import requests
 
@@ -192,7 +195,7 @@ def generate_llm_response(query_text, search_results, citation_style='apa', use_
                 continue
                 
             # Quelle extrahieren (falls vorhanden)
-            source_match = re.search(r'\(([^)]+)\), section)
+            source_match = re.search(r'\(([^)]+)\)$', section)
             if source_match:
                 text_part = section[:source_match.start()].strip()
                 source_part = source_match.group(1)
