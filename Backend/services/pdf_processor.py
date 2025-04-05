@@ -9,33 +9,28 @@ from PIL import Image
 import io
 import numpy as np
 
-# PyMuPDF Importierung
+# PyMuPDF Importierung - direkt mit Fehlerbehandlung
 try:
     import fitz  # PyMuPDF
 except ImportError:
-    try:
-        import PyMuPDF as fitz
-    except ImportError:
-        raise ImportError("PyMuPDF nicht gefunden. Bitte installieren Sie es mit: pip install PyMuPDF")
+    raise ImportError("PyMuPDF nicht gefunden. Bitte installieren Sie es mit: pip install PyMuPDF")
 
 # spaCy Importierung
-try:
-    import spacy
-    logger = logging.getLogger(__name__)
-    # Prüfen, ob Spacy-Modell installiert ist und laden
-    try:
-        nlp = spacy.load("de_core_news_sm")
-        logger.info("Spacy model loaded: de_core_news_sm")
-    except:
-        try:
-            nlp = spacy.load("en_core_web_sm")
-            logger.info("Spacy model loaded: en_core_web_sm")
-        except:
-            logger.warning("No spacy language model found. Using blank model.")
-            nlp = spacy.blank("en")
-except ImportError:
-    raise ImportError("Spacy nicht gefunden. Bitte installieren Sie es mit: pip install spacy")
+import spacy
 
+logger = logging.getLogger(__name__)
+
+# Prüfen, ob Spacy-Modell installiert ist und laden
+try:
+    nlp = spacy.load("de_core_news_sm")
+    logger.info("Spacy model loaded: de_core_news_sm")
+except OSError:
+    try:
+        nlp = spacy.load("en_core_web_sm")
+        logger.info("Spacy model loaded: en_core_web_sm")
+    except OSError:
+        logger.warning("No spacy language model found. Using blank model.")
+        nlp = spacy.blank("en")
 
 class PDFProcessor:
     """Klasse zur Verarbeitung von PDF-Dateien"""
