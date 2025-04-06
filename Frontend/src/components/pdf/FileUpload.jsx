@@ -17,7 +17,8 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Grid
+  Grid,
+  Container
 } from '@mui/material';
 
 // Icons
@@ -453,23 +454,32 @@ const FileUpload = () => {
           </>
         );
         
-      case 2: // Metadaten-Überprüfung
-        return (
-          <>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-              <Typography variant="h6">Dokument-Metadaten</Typography>
-            </Box>
-            
-            <Grid container spacing={3}>
-              {/* Metadaten-Formular (linke Spalte) */}
-              <Grid item xs={12} lg={5} xl={4}>
+        case 2:
+          return (
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: { xs: 'column', lg: 'row' },
+                gap: 3,
+                width: '100%',
+                alignItems: 'flex-start',
+                flexWrap: 'nowrap',
+              }}
+            >
+              {/* Metadaten links */}
+              <Box
+                sx={{
+                  width: { xs: '100%', lg: '65%' },
+                  minWidth: 0,
+                }}
+              >
                 {metadata && (
-                  <MetadataForm 
-                    metadata={metadata} 
+                  <MetadataForm
+                    metadata={metadata}
                     onChange={handleMetadataChange}
                   />
                 )}
-                
+        
                 <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 3 }}>
                   <Button
                     variant="contained"
@@ -481,19 +491,23 @@ const FileUpload = () => {
                     In Datenbank speichern
                   </Button>
                 </Box>
-              </Grid>
-              
-              {/* PDF-Viewer (rechte Spalte) */}
-              <Grid item xs={12} lg={7} xl={8}>
-                {file && (
-                  <PDFViewer file={file} height="750px" />
-                )}
-              </Grid>
-            </Grid>
-            
-            {processing && renderProcessingStatus()}
-          </>
-        );
+              </Box>
+        
+              {/* PDF rechts */}
+              <Box
+                sx={{
+                  width: { xs: '100%', lg: '35%' },
+                  minWidth: 0,
+                }}
+              >
+                {file && <PDFViewer file={file} height="750px" />}
+              </Box>
+        
+              {/* Optional: Ladeanzeige */}
+              {processing && renderProcessingStatus()}
+            </Box>
+          );
+        
         
       case 3: // Erfolgsschritt
         return (
@@ -546,55 +560,58 @@ const FileUpload = () => {
   );
   
   return (
-          <Paper 
-      elevation={3} 
-      sx={{ 
-        p: 3, 
-        mt: 3, 
-        width: '100%', // Fast die volle Breite nutzen
-        maxWidth: 'none', // Aber mit einer maximalen Grenze
-        mx: 'auto',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center'
-      }}
-    >
-      <Typography variant="h5" component="h2" gutterBottom>
-        Wissenschaftliche Publikation hochladen
-      </Typography>
-      
-      {/* Stepper */}
-      <Stepper 
-        activeStep={currentStep} 
-        alternativeLabel 
-        sx={{ width: '100%', mb: 4 }}
+    <Box sx={{ width: '100vw', maxWidth: '100vw', overflowX: 'hidden', m: 0, p: 2 }}>
+      <Paper
+        elevation={3}
+        sx={{
+          width: '100%',
+          maxWidth: '100%',
+          p: 2,
+          m: 0,
+          borderRadius: 0,
+          boxSizing: 'border-box',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
       >
-        {steps.map((label) => (
-          <Step key={label}>
-            <StepLabel>{label}</StepLabel>
-          </Step>
-        ))}
-      </Stepper>
-      
-      {/* Schritt-Inhalt */}
-      <Box sx={{ width: '100%' }}>
-        {renderStepContent()}
-      </Box>
-      
-      {/* Settings-Dialog */}
-      {renderSettingsDialog()}
-      
-      {/* Fehler-Snackbar */}
-      <Snackbar
-        open={snackbarOpen}
-        autoHideDuration={6000}
-        onClose={() => setSnackbarOpen(false)}
-      >
-        <Alert onClose={() => setSnackbarOpen(false)} severity="error">
-          {error}
-        </Alert>
-      </Snackbar>
-    </Paper>
+  
+        <Typography variant="h5" component="h2" gutterBottom sx={{ mb: 1 }}>
+          Wissenschaftliche Publikation hochladen
+        </Typography>
+        
+        {/* Stepper */}
+        <Stepper 
+          activeStep={currentStep} 
+          alternativeLabel 
+          sx={{ width: '100%', mb: 2 }}
+        >
+          {steps.map((label) => (
+            <Step key={label}>
+              <StepLabel>{label}</StepLabel>
+            </Step>
+          ))}
+        </Stepper>
+        
+        {/* Schritt-Inhalt */}
+        <Box sx={{ width: '100%' }}>
+          {renderStepContent()}
+        </Box>
+        
+        {/* Settings-Dialog */}
+        {renderSettingsDialog()}
+        
+        {/* Fehler-Snackbar */}
+        <Snackbar
+          open={snackbarOpen}
+          autoHideDuration={6000}
+          onClose={() => setSnackbarOpen(false)}
+        >
+          <Alert onClose={() => setSnackbarOpen(false)} severity="error">
+            {error}
+          </Alert>
+        </Snackbar>
+      </Paper>
+    </Box>
   );
 };
 

@@ -72,22 +72,22 @@ const MetadataForm = ({ metadata, onChange }) => {
     article: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
       { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
-      { id: 'journal', label: 'Zeitschrift', gridWidth: 6 },
-      { id: 'volume', label: 'Jahrgang', gridWidth: 3 },
-      { id: 'issue', label: 'Heftnummer', gridWidth: 3 },
-      { id: 'pages', label: 'Seiten von-bis', gridWidth: 3 },
-      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 3 },
-      { id: 'doi', label: 'DOI', gridWidth: 6 },
-      { id: 'publisher', label: 'Verlag', gridWidth: 6 },
+      { id: 'journal', label: 'Zeitschrift', gridWidth: 8 },
+      { id: 'volume', label: 'Jahrgang', gridWidth: 2 },
+      { id: 'issue', label: 'Heftnummer', gridWidth: 2 },
+      { id: 'pages', label: 'Seiten von-bis', gridWidth: 4 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 4 },
+      { id: 'doi', label: 'DOI', gridWidth: 8 },
+      { id: 'publisher', label: 'Verlag', gridWidth: 8 },
       { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
     ],
     
     book: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
       { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
-      { id: 'publisher', label: 'Verlag', gridWidth: 6 },
-      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 3 },
-      { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 3 },
+      { id: 'publisher', label: 'Verlag', gridWidth: 8 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 4 },
+      { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 6 },
       { id: 'edition', label: 'Auflage', gridWidth: 3 },
       { id: 'isbn', label: 'ISBN', gridWidth: 6 },
       { id: 'doi', label: 'DOI', gridWidth: 6 },
@@ -99,9 +99,9 @@ const MetadataForm = ({ metadata, onChange }) => {
     edited_book: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
       { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
-      { id: 'publisher', label: 'Verlag', gridWidth: 6 },
-      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 3 },
-      { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 3 },
+      { id: 'publisher', label: 'Verlag', gridWidth: 8 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 4 },
+      { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 6 },
       { id: 'edition', label: 'Auflage', gridWidth: 3 },
       { id: 'isbn', label: 'ISBN', gridWidth: 6 },
       { id: 'doi', label: 'DOI', gridWidth: 6 },
@@ -113,12 +113,12 @@ const MetadataForm = ({ metadata, onChange }) => {
     conference: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
       { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
-      { id: 'conference', label: 'Tagungsname', gridWidth: 6 },
+      { id: 'conference', label: 'Tagungsname', gridWidth: 8 },
       { id: 'conferenceLocation', label: 'Tagungsort', gridWidth: 6 },
       { id: 'conferenceDate', label: 'Veranstaltungsdatum', gridWidth: 6 },
-      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 3 },
-      { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 3 },
-      { id: 'publisher', label: 'Verlag', gridWidth: 6 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 4 },
+      { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 4 },
+      { id: 'publisher', label: 'Verlag', gridWidth: 8 },
       { id: 'isbn', label: 'ISBN', gridWidth: 6 },
       { id: 'doi', label: 'DOI', gridWidth: 6 },
       { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
@@ -129,7 +129,7 @@ const MetadataForm = ({ metadata, onChange }) => {
       { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
       { id: 'thesisType', label: 'Art der Schrift', gridWidth: 6 },
       { id: 'publicationDate', label: 'Datum / Jahr', type: 'date', gridWidth: 6 },
-      { id: 'university', label: 'Hochschule', gridWidth: 6 },
+      { id: 'university', label: 'Hochschule', gridWidth: 8 },
       { id: 'department', label: 'Institut', gridWidth: 6 },
       { id: 'location', label: 'Hochschulort', gridWidth: 6 },
       { id: 'advisor', label: 'Betreuer', gridWidth: 6 },
@@ -140,9 +140,9 @@ const MetadataForm = ({ metadata, onChange }) => {
     report: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
       { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
-      { id: 'institution', label: 'Institution', gridWidth: 6 },
-      { id: 'publicationDate', label: 'Datum / Jahr', type: 'date', gridWidth: 3 },
-      { id: 'location', label: 'Erscheinungsort', gridWidth: 3 },
+      { id: 'institution', label: 'Institution', gridWidth: 8 },
+      { id: 'publicationDate', label: 'Datum / Jahr', type: 'date', gridWidth: 4 },
+      { id: 'location', label: 'Erscheinungsort', gridWidth: 6 },
       { id: 'reportNumber', label: 'Nummer', gridWidth: 3 },
       { id: 'doi', label: 'DOI', gridWidth: 6 },
       { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
@@ -151,11 +151,11 @@ const MetadataForm = ({ metadata, onChange }) => {
     newspaper: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
       { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
-      { id: 'newspaper', label: 'Zeitung', gridWidth: 6 },
-      { id: 'publicationDate', label: 'Datum', type: 'date', gridWidth: 3 },
-      { id: 'location', label: 'Ort', gridWidth: 3 },
+      { id: 'newspaper', label: 'Zeitung', gridWidth: 8 },
+      { id: 'publicationDate', label: 'Datum', type: 'date', gridWidth: 4 },
+      { id: 'location', label: 'Ort', gridWidth: 6 },
       { id: 'edition', label: 'Ausgabe', gridWidth: 3 },
-      { id: 'pages', label: 'Seiten von-bis', gridWidth: 3 },
+      { id: 'pages', label: 'Seiten von-bis', gridWidth: 4 },
       { id: 'doi', label: 'DOI', gridWidth: 6 },
       { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
     ],
@@ -164,9 +164,9 @@ const MetadataForm = ({ metadata, onChange }) => {
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
       { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
       { id: 'url', label: 'Online-Adresse', gridWidth: 12 },
-      { id: 'institution', label: 'Institution', gridWidth: 6 },
-      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 3 },
-      { id: 'lastUpdated', label: 'Letzte Aktualisierung', type: 'date', gridWidth: 3 },
+      { id: 'institution', label: 'Institution', gridWidth: 8 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 4 },
+      { id: 'lastUpdated', label: 'Letzte Aktualisierung', type: 'date', gridWidth: 6 },
       { id: 'accessDate', label: 'Zuletzt geprüft am', type: 'date', gridWidth: 6 },
       { id: 'doi', label: 'DOI', gridWidth: 6 },
       { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
@@ -176,8 +176,8 @@ const MetadataForm = ({ metadata, onChange }) => {
       { id: 'title', label: 'Titel / Thema', required: true, gridWidth: 12 },
       { id: 'interviewer', label: 'Interviewer', gridWidth: 6 },
       { id: 'interviewee', label: 'Interviewte Person', gridWidth: 6 },
-      { id: 'date', label: 'Datum', type: 'date', gridWidth: 3 },
-      { id: 'duration', label: 'Länge', gridWidth: 3 },
+      { id: 'date', label: 'Datum', type: 'date', gridWidth: 4 },
+      { id: 'duration', label: 'Länge', gridWidth: 4 },
       { id: 'location', label: 'Ort', gridWidth: 6 },
       { id: 'medium', label: 'Medium', gridWidth: 6 },
       { id: 'doi', label: 'DOI', gridWidth: 6 }
@@ -186,13 +186,13 @@ const MetadataForm = ({ metadata, onChange }) => {
     press: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
       { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
-      { id: 'institution', label: 'Institution', gridWidth: 6 },
+      { id: 'institution', label: 'Institution', gridWidth: 8 },
       { id: 'contactPerson', label: 'Kontaktperson', gridWidth: 6 },
       { id: 'contactAddress', label: 'Kontaktadresse', gridWidth: 6 },
-      { id: 'date', label: 'Datum', type: 'date', gridWidth: 3 },
-      { id: 'location', label: 'Ort', gridWidth: 3 },
+      { id: 'date', label: 'Datum', type: 'date', gridWidth: 4 },
+      { id: 'location', label: 'Ort', gridWidth: 6 },
       { id: 'embargo', label: 'Sperrfrist', gridWidth: 3 },
-      { id: 'url', label: 'Online-Adresse', gridWidth: 6 },
+      { id: 'url', label: 'Online-Adresse', gridWidth: 8 },
       { id: 'accessDate', label: 'Zuletzt geprüft am', type: 'date', gridWidth: 6 },
       { id: 'doi', label: 'DOI', gridWidth: 6 }
     ],
@@ -201,14 +201,14 @@ const MetadataForm = ({ metadata, onChange }) => {
     other: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
       { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
-      { id: 'publisher', label: 'Verlag', gridWidth: 6 },
-      { id: 'journal', label: 'Zeitschrift', gridWidth: 6 },
-      { id: 'publicationDate', label: 'Jahr/Datum', type: 'date', gridWidth: 3 },
+      { id: 'publisher', label: 'Verlag', gridWidth: 8 },
+      { id: 'journal', label: 'Zeitschrift', gridWidth: 8 },
+      { id: 'publicationDate', label: 'Jahr/Datum', type: 'date', gridWidth: 4 },
       { id: 'edition', label: 'Auflage', gridWidth: 3 },
-      { id: 'pages', label: 'Seiten von-bis', gridWidth: 3 },
+      { id: 'pages', label: 'Seiten von-bis', gridWidth: 4 },
       { id: 'isbn', label: 'ISBN', gridWidth: 6 },
       { id: 'doi', label: 'DOI', gridWidth: 6 },
-      { id: 'url', label: 'Online-Adresse', gridWidth: 6 },
+      { id: 'url', label: 'Online-Adresse', gridWidth: 8 },
       { id: 'accessDate', label: 'Zuletzt geprüft am', type: 'date', gridWidth: 6 },
       { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
     ]
@@ -295,11 +295,11 @@ const MetadataForm = ({ metadata, onChange }) => {
   };
 
   return (
-    <Box sx={{ width: '100%', overflowX: 'hidden' }}>
-      <Grid container spacing={3} sx={{ width: '100%' }}>
+    <Box sx={{ width: '100%' }}>
+      <Grid container spacing={1} sx={{ width: '100%' }}>
         {/* Dokumenttyp-Auswahl */}
-        <Grid item xs={12}>
-          <FormControl fullWidth>
+        <Grid item xs={12} sx={{ mb: 1 }}>
+          <FormControl fullWidth size="small">
             <InputLabel id="document-type-label">Dokumententyp</InputLabel>
             <Select
               labelId="document-type-label"
@@ -321,39 +321,43 @@ const MetadataForm = ({ metadata, onChange }) => {
         </Grid>
 
         {/* Autorensektion */}
-        <Grid item xs={12}>
-          <Paper variant="outlined" sx={{ p: 2 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="subtitle1">
+        <Grid item xs={12} sx={{ my: 0 }}>
+          <Paper variant="outlined" sx={{ p: 1 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+              <Typography variant="subtitle2">
                 {documentType === 'edited_book' || documentType === 'conference' ? 'Herausgeber' : 'Autoren'}
               </Typography>
               <Button 
                 startIcon={<AddIcon />} 
                 size="small" 
                 onClick={openAddAuthorDialog}
+                variant="text"
+                color="primary"
+                sx={{ py: 0, minWidth: 'auto' }}
               >
-                {documentType === 'edited_book' || documentType === 'conference' ? 'Herausgeber hinzufügen' : 'Autor hinzufügen'}
+                {documentType === 'edited_book' || documentType === 'conference' ? 'Hinzufügen' : 'Hinzufügen'}
               </Button>
             </Box>
-            
+
             {(!metadata.authors || metadata.authors.length === 0) ? (
-              <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', mb: 1 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', fontSize: '0.8rem' }}>
                 {documentType === 'edited_book' || documentType === 'conference' 
-                  ? 'Noch keine Herausgeber hinzugefügt' 
-                  : 'Noch keine Autoren hinzugefügt'}
+                  ? 'Noch keine Herausgeber' 
+                  : 'Noch keine Autoren'}
               </Typography>
             ) : (
-              <List dense>
+              <List dense sx={{ py: 0 }}>
                 {metadata.authors.map((author, index) => (
                   <ListItem 
                     key={index}
                     secondaryAction={
-                      <Box>
+                      <Box sx={{ display: 'flex' }}>
                         <IconButton 
                           edge="end" 
                           aria-label="edit" 
                           onClick={() => openEditAuthorDialog(author, index)}
                           size="small"
+                          sx={{ p: 0.5 }}
                         >
                           <EditIcon fontSize="small" />
                         </IconButton>
@@ -362,15 +366,19 @@ const MetadataForm = ({ metadata, onChange }) => {
                           aria-label="delete" 
                           onClick={() => removeAuthor(index)}
                           size="small"
+                          sx={{ p: 0.5 }}
                         >
                           <DeleteIcon fontSize="small" />
                         </IconButton>
                       </Box>
                     }
+                    sx={{ py: 0 }}
                   >
                     <ListItemText 
                       primary={author.name} 
-                      secondary={author.orcid && `ORCID: ${author.orcid}`} 
+                      secondary={author.orcid && `ORCID: ${author.orcid}`}
+                      primaryTypographyProps={{ fontSize: '0.9rem' }}
+                      secondaryTypographyProps={{ fontSize: '0.75rem' }}
                     />
                   </ListItem>
                 ))}
@@ -380,52 +388,53 @@ const MetadataForm = ({ metadata, onChange }) => {
         </Grid>
 
         {/* Dynamische Felder basierend auf dem Dokumenttyp */}
-        {activeConfig.map((field) => (
-          <Grid item xs={12} sm={field.gridWidth} key={field.id}>
-            <TextField
-              fullWidth
-              label={field.label}
-              // Wir behandeln Datumsfelder als Textfelder für mehr Flexibilität
-              type={field.type === 'date' ? 'text' : (field.type || 'text')}
-              required={field.required}
-              multiline={field.multiline}
-              rows={field.rows}
-              value={metadata[field.id] || ''}
-              onChange={(e) => {
-                // Bei Datumsfeldern versuchen wir gleich zu formatieren
-                if (field.type === 'date') {
-                  const formattedDate = formatToISODate(e.target.value);
-                  onChange(field.id, formattedDate);
-                } else {
-                  onChange(field.id, e.target.value);
-                }
-              }}
-              variant="outlined"
-              InputLabelProps={field.type === 'date' ? {
-                shrink: true,
-              } : undefined}
-              // Für Datumsfelder ein Hilfsmuster anzeigen und Icon
-              helperText={field.type === 'date' ? 'Format: JJJJ-MM-TT (z.B. 2015-11-03)' : undefined}
-              InputProps={field.type === 'date' ? {
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <Tooltip title="Gültiges Datumsformat: JJJJ-MM-TT">
-                      <CalendarTodayIcon color="action" fontSize="small" />
-                    </Tooltip>
-                  </InputAdornment>
-                ),
-              } : undefined}
-              // Zusätzlicher Abstand für bessere Lesbarkeit
-              sx={{ 
-                mb: 1,
-                '& .MuiInputBase-input': {
-                  fontSize: '0.95rem',
-                  padding: '14px 12px'
-                } 
-              }}
-            />
-          </Grid>
-        ))}
+        {activeConfig.map((field) => {
+          // Berechnen der Grid-Breite basierend auf der Bildschirmgröße
+          const fieldWidth = field.gridWidth || 12;
+          return (
+            <Grid item xs={12} sm={fieldWidth} md={fieldWidth} key={field.id} sx={{ px: 1 }}>
+              <TextField
+                fullWidth
+                label={field.label}
+                // Wir behandeln Datumsfelder als Textfelder für mehr Flexibilität
+                type={field.type === 'date' ? 'text' : (field.type || 'text')}
+                required={field.required}
+                multiline={field.multiline}
+                rows={field.rows}
+                value={metadata[field.id] || ''}
+                onChange={(e) => {
+                  // Bei Datumsfeldern versuchen wir gleich zu formatieren
+                  if (field.type === 'date') {
+                    const formattedDate = formatToISODate(e.target.value);
+                    onChange(field.id, formattedDate);
+                  } else {
+                    onChange(field.id, e.target.value);
+                  }
+                }}
+                variant="outlined"
+                InputLabelProps={field.type === 'date' ? {
+                  shrink: true,
+                } : undefined}
+                // Für Datumsfelder ein Hilfsmuster anzeigen und Icon
+                helperText={field.type === 'date' ? 'Format: JJJJ-MM-TT (z.B. 2015-11-03)' : undefined}
+                InputProps={field.type === 'date' ? {
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <Tooltip title="Gültiges Datumsformat: JJJJ-MM-TT">
+                        <CalendarTodayIcon color="action" fontSize="small" />
+                      </Tooltip>
+                    </InputAdornment>
+                  ),
+                } : undefined}
+                // Größe der Felder
+                size="small"
+                sx={{ 
+                  my: 0.5,
+                }}
+              />
+            </Grid>
+          );
+        })}
       </Grid>
 
       {/* Autor-Dialog */}

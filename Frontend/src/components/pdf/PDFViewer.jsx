@@ -158,7 +158,7 @@ const PDFViewer = ({ file, initialPage = 1, height = '700px' }) => {
         display: 'flex', 
         justifyContent: 'center', 
         alignItems: 'flex-start',
-        p: 2,
+        p: 0,
         bgcolor: '#f5f5f5'
       }}>
         {loading && (
