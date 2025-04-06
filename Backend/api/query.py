@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 from flask import Blueprint, jsonify, request, current_app
 import requests
+import re
 
 # Eigene Services importieren
 from services.vector_db import search_documents
