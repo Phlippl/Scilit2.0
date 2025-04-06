@@ -18,7 +18,6 @@ import {
   DialogContent,
   DialogActions,
   Grid,
-  Container
 } from '@mui/material';
 
 // Icons
@@ -40,6 +39,25 @@ import { formatToISODate } from '../../utils/dateFormatter';
 // Hooks
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+
+// Full viewport width container wrapper component
+const FullWidthContainer = ({ children }) => (
+  <Box
+    sx={{
+      position: 'relative',
+      width: '90vw', // Slightly narrower than full viewport width
+      left: '50%',
+      right: '50%',
+      marginLeft: '-45vw', // Half of the width
+      marginRight: '-45vw', // Half of the width
+      boxSizing: 'border-box',
+      px: { xs: 6, sm: 8 }, // More horizontal padding
+      py: 2,
+    }}
+  >
+    {children}
+  </Box>
+);
 
 const FileUpload = () => {
   const { isAuthenticated } = useAuth();
@@ -454,61 +472,41 @@ const FileUpload = () => {
           </>
         );
         
-        case 2:
-          return (
-            <Box
-              sx={{
-                display: 'flex',
-                flexDirection: { xs: 'column', lg: 'row' },
-                gap: 3,
-                width: '100%',
-                alignItems: 'flex-start',
-                flexWrap: 'nowrap',
-              }}
-            >
-              {/* Metadaten links */}
-              <Box
-                sx={{
-                  width: { xs: '100%', lg: '65%' },
-                  minWidth: 0,
-                }}
-              >
-                {metadata && (
-                  <MetadataForm
-                    metadata={metadata}
-                    onChange={handleMetadataChange}
-                  />
-                )}
-        
-                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 3 }}>
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    startIcon={<SaveIcon />}
-                    onClick={saveToDatabase}
-                    disabled={processing}
-                  >
-                    In Datenbank speichern
-                  </Button>
-                </Box>
+      case 2: // Metadaten-Schritt
+        return (
+          <Box sx={{ display: 'flex', gap: 4, flexDirection: { xs: 'column', md: 'row' } }}>
+            {/* Metadaten links */}
+            <Box sx={{ width: { xs: '100%', md: '55%' } }}>
+              {metadata && (
+                <MetadataForm
+                  metadata={metadata}
+                  onChange={handleMetadataChange}
+                />
+              )}
+      
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 3 }}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<SaveIcon />}
+                  onClick={saveToDatabase}
+                  disabled={processing}
+                >
+                  In Datenbank speichern
+                </Button>
               </Box>
-        
-              {/* PDF rechts */}
-              <Box
-                sx={{
-                  width: { xs: '100%', lg: '35%' },
-                  minWidth: 0,
-                }}
-              >
-                {file && <PDFViewer file={file} height="750px" />}
-              </Box>
-        
-              {/* Optional: Ladeanzeige */}
-              {processing && renderProcessingStatus()}
             </Box>
-          );
-        
-        
+      
+            {/* PDF rechts */}
+            <Box sx={{ width: { xs: '100%', md: '45%' } }}>
+              {file && <PDFViewer file={file} height="750px" />}
+            </Box>
+      
+            {/* Optional: Ladeanzeige */}
+            {processing && renderProcessingStatus()}
+          </Box>
+        );
+      
       case 3: // Erfolgsschritt
         return (
           <Box sx={{ textAlign: 'center', py: 4 }}>
@@ -559,43 +557,49 @@ const FileUpload = () => {
     </Dialog>
   );
   
+  // Use the full-width container for the entire component
   return (
-    <Box sx={{ width: '100vw', maxWidth: '100vw', overflowX: 'hidden', m: 0, p: 2 }}>
-      <Paper
-        elevation={3}
-        sx={{
-          width: '100%',
-          maxWidth: '100%',
-          p: 2,
-          m: 0,
-          borderRadius: 0,
-          boxSizing: 'border-box',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-  
-        <Typography variant="h5" component="h2" gutterBottom sx={{ mb: 1 }}>
-          Wissenschaftliche Publikation hochladen
-        </Typography>
-        
-        {/* Stepper */}
-        <Stepper 
-          activeStep={currentStep} 
-          alternativeLabel 
-          sx={{ width: '100%', mb: 2 }}
+    <FullWidthContainer>
+      <Box sx={{ maxWidth: '100%', overflowX: 'hidden' }}>
+        <Paper
+          elevation={3}
+          sx={{
+            width: '100%',
+            p: { xs: 3, md: 4 },
+            mb: 4,
+            mx: 'auto',
+            maxWidth: 1500 // Set a maximum width for the paper component
+          }}
         >
-          {steps.map((label) => (
-            <Step key={label}>
-              <StepLabel>{label}</StepLabel>
-            </Step>
-          ))}
-        </Stepper>
-        
-        {/* Schritt-Inhalt */}
-        <Box sx={{ width: '100%' }}>
-          {renderStepContent()}
-        </Box>
+          {/* Main heading centered */}
+          <Typography 
+            variant="h5" 
+            component="h2" 
+            gutterBottom 
+            align="center" 
+            sx={{ mb: 3 }}
+          >
+            Wissenschaftliche Publikation hochladen
+          </Typography>
+          
+          {/* Stepper */}
+          <Stepper 
+            activeStep={currentStep} 
+            alternativeLabel 
+            sx={{ width: '100%', mb: 4 }}
+          >
+            {steps.map((label) => (
+              <Step key={label}>
+                <StepLabel>{label}</StepLabel>
+              </Step>
+            ))}
+          </Stepper>
+          
+          {/* Schritt-Inhalt */}
+          <Box sx={{ width: '100%' }}>
+            {renderStepContent()}
+          </Box>
+        </Paper>
         
         {/* Settings-Dialog */}
         {renderSettingsDialog()}
@@ -610,8 +614,8 @@ const FileUpload = () => {
             {error}
           </Alert>
         </Snackbar>
-      </Paper>
-    </Box>
+      </Box>
+    </FullWidthContainer>
   );
 };
 

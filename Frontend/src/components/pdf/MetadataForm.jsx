@@ -70,21 +70,19 @@ const MetadataForm = ({ metadata, onChange }) => {
    */
   const typeConfigs = {
     article: [
-      { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
-      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
-      { id: 'journal', label: 'Zeitschrift', gridWidth: 8 },
+      { id: 'title', label: 'Titel', required: true, gridWidth: 12, multiline: true, rows: 3 },    
+      { id: 'journal', label: 'Zeitschrift', gridWidth: 8, multiline: true, rows: 2 },
       { id: 'volume', label: 'Jahrgang', gridWidth: 2 },
       { id: 'issue', label: 'Heftnummer', gridWidth: 2 },
-      { id: 'pages', label: 'Seiten von-bis', gridWidth: 4 },
-      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 4 },
-      { id: 'doi', label: 'DOI', gridWidth: 8 },
-      { id: 'publisher', label: 'Verlag', gridWidth: 8 },
+      { id: 'pages', label: 'Seiten von-bis', gridWidth: 2.2 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 2.8 },
+      { id: 'doi', label: 'DOI', gridWidth: 6 },
+      { id: 'publisher', label: 'Verlag', gridWidth: 6 },
       { id: 'abstract', label: 'Abstract', multiline: true, rows: 4, gridWidth: 12 }
     ],
     
     book: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
-      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
       { id: 'publisher', label: 'Verlag', gridWidth: 8 },
       { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 4 },
       { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 6 },
@@ -98,7 +96,6 @@ const MetadataForm = ({ metadata, onChange }) => {
     
     edited_book: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
-      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
       { id: 'publisher', label: 'Verlag', gridWidth: 8 },
       { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 4 },
       { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 6 },
@@ -112,11 +109,10 @@ const MetadataForm = ({ metadata, onChange }) => {
     
     conference: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
-      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
-      { id: 'conference', label: 'Tagungsname', gridWidth: 8 },
+      { id: 'conference', label: 'Tagungsname', gridWidth: 6 },
       { id: 'conferenceLocation', label: 'Tagungsort', gridWidth: 6 },
-      { id: 'conferenceDate', label: 'Veranstaltungsdatum', gridWidth: 6 },
-      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 4 },
+      { id: 'conferenceDate', label: 'Tagungsdatum', gridWidth: 3 },
+      { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 3 },
       { id: 'publisherLocation', label: 'Verlagsort', gridWidth: 4 },
       { id: 'publisher', label: 'Verlag', gridWidth: 8 },
       { id: 'isbn', label: 'ISBN', gridWidth: 6 },
@@ -126,7 +122,6 @@ const MetadataForm = ({ metadata, onChange }) => {
     
     thesis: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
-      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
       { id: 'thesisType', label: 'Art der Schrift', gridWidth: 6 },
       { id: 'publicationDate', label: 'Datum / Jahr', type: 'date', gridWidth: 6 },
       { id: 'university', label: 'Hochschule', gridWidth: 8 },
@@ -139,7 +134,6 @@ const MetadataForm = ({ metadata, onChange }) => {
     
     report: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
-      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
       { id: 'institution', label: 'Institution', gridWidth: 8 },
       { id: 'publicationDate', label: 'Datum / Jahr', type: 'date', gridWidth: 4 },
       { id: 'location', label: 'Erscheinungsort', gridWidth: 6 },
@@ -150,7 +144,6 @@ const MetadataForm = ({ metadata, onChange }) => {
     
     newspaper: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
-      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
       { id: 'newspaper', label: 'Zeitung', gridWidth: 8 },
       { id: 'publicationDate', label: 'Datum', type: 'date', gridWidth: 4 },
       { id: 'location', label: 'Ort', gridWidth: 6 },
@@ -162,7 +155,6 @@ const MetadataForm = ({ metadata, onChange }) => {
     
     website: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
-      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
       { id: 'url', label: 'Online-Adresse', gridWidth: 12 },
       { id: 'institution', label: 'Institution', gridWidth: 8 },
       { id: 'publicationDate', label: 'Jahr', type: 'date', gridWidth: 4 },
@@ -185,7 +177,6 @@ const MetadataForm = ({ metadata, onChange }) => {
     
     press: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
-      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
       { id: 'institution', label: 'Institution', gridWidth: 8 },
       { id: 'contactPerson', label: 'Kontaktperson', gridWidth: 6 },
       { id: 'contactAddress', label: 'Kontaktadresse', gridWidth: 6 },
@@ -200,7 +191,6 @@ const MetadataForm = ({ metadata, onChange }) => {
     // Fallback für unbekannte Dokumenttypen
     other: [
       { id: 'title', label: 'Titel', required: true, gridWidth: 12 },
-      { id: 'subtitle', label: 'Untertitel', gridWidth: 12 },
       { id: 'publisher', label: 'Verlag', gridWidth: 8 },
       { id: 'journal', label: 'Zeitschrift', gridWidth: 8 },
       { id: 'publicationDate', label: 'Jahr/Datum', type: 'date', gridWidth: 4 },
@@ -416,7 +406,7 @@ const MetadataForm = ({ metadata, onChange }) => {
                   shrink: true,
                 } : undefined}
                 // Für Datumsfelder ein Hilfsmuster anzeigen und Icon
-                helperText={field.type === 'date' ? 'Format: JJJJ-MM-TT (z.B. 2015-11-03)' : undefined}
+                helperText={field.type === 'date' ? 'Format: JJJJ-MM-TT' : undefined}
                 InputProps={field.type === 'date' ? {
                   endAdornment: (
                     <InputAdornment position="end">
