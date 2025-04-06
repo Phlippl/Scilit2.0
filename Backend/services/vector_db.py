@@ -39,7 +39,7 @@ else:
     logger.warning(f"Using default embedding function (less powerful)")
     ef = embedding_functions.DefaultEmbeddingFunction()
 
-# Rest of your code...
+
 # ChromaDB Client initialisieren
 try:
     client = chromadb.PersistentClient(
