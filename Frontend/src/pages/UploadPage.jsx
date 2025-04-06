@@ -18,7 +18,7 @@ const UploadPage = () => {
   }, [isAuthenticated, navigate]);
   
   return (
-    <Container>
+    <Container maxWidth="xl">
       <Box sx={{ mt: 4, mb: 2 }}>
         <Typography variant="h4" component="h1" gutterBottom>
           Upload Document
