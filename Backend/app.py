@@ -9,6 +9,9 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 
+import sys
+sys.dont_write_bytecode = True  # Verhindert, dass Python .pyc-Dateien erstellt
+
 # Blueprints importieren
 from api.documents import documents_bp
 from api.metadata import metadata_bp
