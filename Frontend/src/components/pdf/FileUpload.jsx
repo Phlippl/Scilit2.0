@@ -34,6 +34,7 @@ import * as documentsApi from '../../api/documents';
 import ProcessingSettings from './ProcessingSettings';
 import MetadataForm, { detectDocumentType } from './MetadataForm';
 import PDFViewer from './PDFViewer';
+import { formatToISODate } from '../../utils/dateFormatter';
 
 // Hooks
 import { useNavigate } from 'react-router-dom';
@@ -241,9 +242,17 @@ const FileUpload = () => {
    * Behandelt Metadaten-Updates
    */
   const handleMetadataChange = (field, value) => {
+    // Datum-Felder in das ISO-Format konvertieren
+    let formattedValue = value;
+    if (field === 'publicationDate' || field === 'date' || 
+        field === 'conferenceDate' || field === 'lastUpdated' || 
+        field === 'accessDate') {
+      formattedValue = formatToISODate(value);
+    }
+
     setMetadata(prev => ({
       ...prev,
-      [field]: value,
+      [field]: formattedValue,
     }));
   };
   
@@ -265,8 +274,12 @@ const FileUpload = () => {
       const documentData = {
         metadata: {
           ...metadata,
-          // Datumsformat korrigieren
-          publicationDate: metadata.publicationDate || new Date().toISOString().split('T')[0]
+          // Datumsformat korrigieren für alle Datumsfelder
+          publicationDate: formatToISODate(metadata.publicationDate) || new Date().toISOString().split('T')[0],
+          date: metadata.date ? formatToISODate(metadata.date) : undefined,
+          conferenceDate: metadata.conferenceDate ? formatToISODate(metadata.conferenceDate) : undefined,
+          lastUpdated: metadata.lastUpdated ? formatToISODate(metadata.lastUpdated) : undefined,
+          accessDate: metadata.accessDate ? formatToISODate(metadata.accessDate) : undefined
         },
         text: extractedText,
         chunks: chunks,
@@ -449,7 +462,7 @@ const FileUpload = () => {
             
             <Grid container spacing={3}>
               {/* Metadaten-Formular (linke Spalte) */}
-              <Grid item xs={12} md={6}>
+              <Grid item xs={12} lg={5} xl={4}>
                 {metadata && (
                   <MetadataForm 
                     metadata={metadata} 
@@ -471,9 +484,9 @@ const FileUpload = () => {
               </Grid>
               
               {/* PDF-Viewer (rechte Spalte) */}
-              <Grid item xs={12} md={6}>
+              <Grid item xs={12} lg={7} xl={8}>
                 {file && (
-                  <PDFViewer file={file} height="700px" />
+                  <PDFViewer file={file} height="750px" />
                 )}
               </Grid>
             </Grid>
@@ -533,12 +546,13 @@ const FileUpload = () => {
   );
   
   return (
-    <Paper 
+          <Paper 
       elevation={3} 
       sx={{ 
         p: 3, 
         mt: 3, 
-        maxWidth: 1200, // Breiter machen, um beide Spalten zu berücksichtigen
+        width: '100%', // Fast die volle Breite nutzen
+        maxWidth: 'none', // Aber mit einer maximalen Grenze
         mx: 'auto',
         display: 'flex',
         flexDirection: 'column',

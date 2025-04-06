@@ -21,12 +21,18 @@ import {
   Select,
   FormControl,
   InputLabel,
-  FormHelperText
+  FormHelperText,
+  InputAdornment,
+  Tooltip
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import PersonIcon from '@mui/icons-material/Person';
+import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+
+import { formatToISODate, formatFromISODate } from '../../utils/dateFormatter';
 
 /**
  * Dynamisches Metadatenformular, das sich basierend auf dem Dokumenttyp anpasst
@@ -224,6 +230,19 @@ const MetadataForm = ({ metadata, onChange }) => {
     onChange('type', event.target.value);
   };
   
+  // Hilfsfunktion für die Datumsformatierung
+  const formatDateForDisplay = (dateString) => {
+    if (!dateString) return '';
+    
+    // Wenn im ISO-Format, zeige es formatiert an
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+      return formatFromISODate(dateString);
+    }
+    
+    // Ansonsten zeige es unverändert an
+    return dateString;
+  };
+  
   // Autor-Dialog öffnen für Hinzufügen
   const openAddAuthorDialog = () => {
     setCurrentAuthor({ name: '', orcid: '' });
@@ -276,8 +295,8 @@ const MetadataForm = ({ metadata, onChange }) => {
   };
 
   return (
-    <Box>
-      <Grid container spacing={3}>
+    <Box sx={{ width: '100%', overflowX: 'hidden' }}>
+      <Grid container spacing={3} sx={{ width: '100%' }}>
         {/* Dokumenttyp-Auswahl */}
         <Grid item xs={12}>
           <FormControl fullWidth>
@@ -366,16 +385,44 @@ const MetadataForm = ({ metadata, onChange }) => {
             <TextField
               fullWidth
               label={field.label}
-              type={field.type || 'text'}
+              // Wir behandeln Datumsfelder als Textfelder für mehr Flexibilität
+              type={field.type === 'date' ? 'text' : (field.type || 'text')}
               required={field.required}
               multiline={field.multiline}
               rows={field.rows}
               value={metadata[field.id] || ''}
-              onChange={(e) => onChange(field.id, e.target.value)}
+              onChange={(e) => {
+                // Bei Datumsfeldern versuchen wir gleich zu formatieren
+                if (field.type === 'date') {
+                  const formattedDate = formatToISODate(e.target.value);
+                  onChange(field.id, formattedDate);
+                } else {
+                  onChange(field.id, e.target.value);
+                }
+              }}
               variant="outlined"
               InputLabelProps={field.type === 'date' ? {
                 shrink: true,
               } : undefined}
+              // Für Datumsfelder ein Hilfsmuster anzeigen und Icon
+              helperText={field.type === 'date' ? 'Format: JJJJ-MM-TT (z.B. 2015-11-03)' : undefined}
+              InputProps={field.type === 'date' ? {
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <Tooltip title="Gültiges Datumsformat: JJJJ-MM-TT">
+                      <CalendarTodayIcon color="action" fontSize="small" />
+                    </Tooltip>
+                  </InputAdornment>
+                ),
+              } : undefined}
+              // Zusätzlicher Abstand für bessere Lesbarkeit
+              sx={{ 
+                mb: 1,
+                '& .MuiInputBase-input': {
+                  fontSize: '0.95rem',
+                  padding: '14px 12px'
+                } 
+              }}
             />
           </Grid>
         ))}
