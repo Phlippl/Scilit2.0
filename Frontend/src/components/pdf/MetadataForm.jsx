@@ -39,6 +39,7 @@ const MetadataForm = ({ metadata, onChange }) => {
   const [authorDialogOpen, setAuthorDialogOpen] = useState(false);
   const [currentAuthor, setCurrentAuthor] = useState({ name: '', orcid: '' });
   const [editingAuthorIndex, setEditingAuthorIndex] = useState(-1);
+  const [allFields, setAllFields] = useState({});
   
   // Verfügbare Dokumenttypen
   const documentTypes = [
@@ -210,8 +211,16 @@ const MetadataForm = ({ metadata, onChange }) => {
   // Aktive Konfiguration für den aktuellen Dokumenttyp
   const activeConfig = typeConfigs[documentType] || typeConfigs.other;
 
+  // Bei Änderungen der Metadaten alle Felder aktualisieren
+  useEffect(() => {
+    // Sammle alle Felder aus den Metadaten
+    const fields = { ...metadata };
+    setAllFields(fields);
+  }, [metadata]);
+
   // Typ des Dokuments ändern
   const handleTypeChange = (event) => {
+    // Statt nur den Typ zu ändern, behalten wir alle vorhandenen Metadaten
     onChange('type', event.target.value);
   };
   

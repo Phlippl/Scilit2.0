@@ -16,7 +16,8 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogActions
+  DialogActions,
+  Grid
 } from '@mui/material';
 
 // Icons
@@ -32,6 +33,7 @@ import * as metadataApi from '../../api/metadata';
 import * as documentsApi from '../../api/documents';
 import ProcessingSettings from './ProcessingSettings';
 import MetadataForm, { detectDocumentType } from './MetadataForm';
+import PDFViewer from './PDFViewer';
 
 // Hooks
 import { useNavigate } from 'react-router-dom';
@@ -202,24 +204,23 @@ const FileUpload = () => {
             type: 'other' // Standard-Dokumenttyp
           });
         }
-  
-          } else {
-          // Wenn keine Identifikatoren gefunden wurden
-          setMetadata({
-            title: '',
-            authors: [],
-            publicationDate: '',
-            publisher: '',
-            journal: '',
-            doi: '',
-            isbn: '',
-            abstract: '',
-            type: 'other' // Standard-Dokumenttyp
-          });
-          
-          setError('Keine DOI oder ISBN konnte aus dem Dokument extrahiert werden. Bitte gib die Metadaten manuell ein.');
-          setSnackbarOpen(true);
-        }
+      } else {
+        // Wenn keine Identifikatoren gefunden wurden
+        setMetadata({
+          title: '',
+          authors: [],
+          publicationDate: '',
+          publisher: '',
+          journal: '',
+          doi: '',
+          isbn: '',
+          abstract: '',
+          type: 'other' // Standard-Dokumenttyp
+        });
+        
+        setError('Keine DOI oder ISBN konnte aus dem Dokument extrahiert werden. Bitte gib die Metadaten manuell ein.');
+        setSnackbarOpen(true);
+      }
       
       setProcessingStage('Verarbeitung abgeschlossen');
       setProcessingProgress(100);
@@ -446,24 +447,36 @@ const FileUpload = () => {
               <Typography variant="h6">Dokument-Metadaten</Typography>
             </Box>
             
-            {metadata && (
-              <MetadataForm 
-                metadata={metadata} 
-                onChange={handleMetadataChange}
-              />
-            )}
-            
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 3 }}>
-              <Button
-                variant="contained"
-                color="primary"
-                startIcon={<SaveIcon />}
-                onClick={saveToDatabase}
-                disabled={processing}
-              >
-                In Datenbank speichern
-              </Button>
-            </Box>
+            <Grid container spacing={3}>
+              {/* Metadaten-Formular (linke Spalte) */}
+              <Grid item xs={12} md={6}>
+                {metadata && (
+                  <MetadataForm 
+                    metadata={metadata} 
+                    onChange={handleMetadataChange}
+                  />
+                )}
+                
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 3 }}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={<SaveIcon />}
+                    onClick={saveToDatabase}
+                    disabled={processing}
+                  >
+                    In Datenbank speichern
+                  </Button>
+                </Box>
+              </Grid>
+              
+              {/* PDF-Viewer (rechte Spalte) */}
+              <Grid item xs={12} md={6}>
+                {file && (
+                  <PDFViewer file={file} height="700px" />
+                )}
+              </Grid>
+            </Grid>
             
             {processing && renderProcessingStatus()}
           </>
@@ -525,7 +538,7 @@ const FileUpload = () => {
       sx={{ 
         p: 3, 
         mt: 3, 
-        maxWidth: 900, 
+        maxWidth: 1200, // Breiter machen, um beide Spalten zu berücksichtigen
         mx: 'auto',
         display: 'flex',
         flexDirection: 'column',
