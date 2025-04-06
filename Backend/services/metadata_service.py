@@ -1,7 +1,7 @@
 import re
 import logging
 import requests
-from crossrefapi import CrossrefClient
+from crossref.restful import Works
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -11,7 +11,7 @@ class MetadataService:
     
     def __init__(self):
         # Initialize CrossRef client
-        self.crossref = CrossrefClient()
+        self.crossref = Works()
     
     def extract_identifiers(self, text):
         """Extract DOI and ISBN from text"""

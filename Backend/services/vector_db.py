@@ -7,6 +7,7 @@ import uuid
 import re
 from chromadb.config import Settings
 from chromadb.utils import embedding_functions
+from services.ollama_embeddings import OllamaEmbeddingFunction  # Update import path
 
 logger = logging.getLogger(__name__)
 
@@ -14,12 +15,16 @@ logger = logging.getLogger(__name__)
 CHROMA_PERSIST_DIR = os.environ.get('CHROMA_PERSIST_DIR', './data/chroma')
 
 # Einbettungsfunktion konfigurieren
-EMBEDDING_FUNCTION_NAME = os.environ.get('EMBEDDING_FUNCTION', 'openai')
+EMBEDDING_FUNCTION_NAME = os.environ.get('EMBEDDING_FUNCTION', 'ollama')  # Default to Ollama
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 HUGGINGFACE_API_KEY = os.environ.get('HUGGINGFACE_API_KEY', '')
 
-# Defaultmäßig OpenAI-Embeddings verwenden, Fallback auf HuggingFace
-if EMBEDDING_FUNCTION_NAME == 'openai' and OPENAI_API_KEY:
+# Choose embedding function based on configuration
+if EMBEDDING_FUNCTION_NAME == 'ollama':
+    ollama_url = os.environ.get('OLLAMA_API_URL', 'http://localhost:11434')
+    ollama_model = os.environ.get('OLLAMA_MODEL', 'llama3')
+    ef = OllamaEmbeddingFunction(base_url=ollama_url, model=ollama_model)
+elif EMBEDDING_FUNCTION_NAME == 'openai' and OPENAI_API_KEY:
     ef = embedding_functions.OpenAIEmbeddingFunction(
         api_key=OPENAI_API_KEY,
         model_name="text-embedding-ada-002"
@@ -31,8 +36,10 @@ elif EMBEDDING_FUNCTION_NAME == 'huggingface' and HUGGINGFACE_API_KEY:
     )
 else:
     # Default ist die lokale Einbettungsfunktion (weniger leistungsfähig)
+    logger.warning(f"Using default embedding function (less powerful)")
     ef = embedding_functions.DefaultEmbeddingFunction()
 
+# Rest of your code...
 # ChromaDB Client initialisieren
 try:
     client = chromadb.PersistentClient(
