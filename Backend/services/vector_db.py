@@ -66,11 +66,11 @@ def get_or_create_collection(collection_name):
 
 def store_document_chunks(document_id, chunks, metadata):
     """
-    Speichert die Chunks eines Dokuments in der Vektordatenbank
+    Speichert die Chunks eines Dokuments in der Vektordatenbank mit Seitenzahlen
     
     Args:
         document_id (str): Eindeutige ID des Dokuments
-        chunks (list): Liste von Textabschnitten
+        chunks (list): Liste von Textabschnitten mit Seitenzuordnung
         metadata (dict): Metadaten des Dokuments
     
     Returns:
@@ -90,17 +90,25 @@ def store_document_chunks(document_id, chunks, metadata):
             collection.delete(ids=existing_ids['ids'])
             logger.info(f"Deleted {len(existing_ids['ids'])} existing chunks for document {document_id}")
         
-        # Basis-Metadaten für alle Chunks
+        # Basis-Metadaten für alle Chunks vorbereiten
+        authors_json = json.dumps(metadata.get('authors', []))
         base_metadata = {
             "document_id": document_id,
             "title": metadata.get('title', ''),
-            "authors": json.dumps(metadata.get('authors', [])),
+            "authors": authors_json,
             "type": metadata.get('type', 'other'),
             "publication_date": metadata.get('publicationDate', ''),
             "doi": metadata.get('doi', ''),
             "isbn": metadata.get('isbn', ''),
             "journal": metadata.get('journal', ''),
-            "publisher": metadata.get('publisher', '')
+            "publisher": metadata.get('publisher', ''),
+            # Weitere relevante Felder aus den Metadaten
+            "volume": metadata.get('volume', ''),
+            "issue": metadata.get('issue', ''),
+            "pages": metadata.get('pages', ''),
+            "publisherLocation": metadata.get('publisherLocation', ''),
+            "url": metadata.get('url', ''),
+            "abstract": metadata.get('abstract', '')
         }
         
         # Chunk-IDs, Texte und Metadaten vorbereiten
@@ -111,16 +119,26 @@ def store_document_chunks(document_id, chunks, metadata):
         for i, chunk in enumerate(chunks):
             chunk_id = f"{document_id}_chunk_{i}"
             chunk_ids.append(chunk_id)
-            chunk_texts.append(chunk)
             
-            # Metadaten pro Chunk mit Position im Dokument
+            # Text aus dem Chunk extrahieren
+            if isinstance(chunk, dict):
+                chunk_text = chunk.get('text', '')
+                page_number = chunk.get('page_number')
+            else:
+                # Fallback für einfache Textchunks
+                chunk_text = chunk
+                page_number = None
+            
+            chunk_texts.append(chunk_text)
+            
+            # Metadaten pro Chunk mit Position im Dokument und Seitenzahl
             chunk_metadata = base_metadata.copy()
             chunk_metadata["chunk_index"] = i
             chunk_metadata["chunk_count"] = len(chunks)
             
-            # Position im Dokument (falls vorhanden)
-            if 'pages' in metadata and i < len(metadata['pages']):
-                chunk_metadata["page"] = metadata['pages'][i].get('pageNumber', '')
+            # Seitennummer hinzufügen
+            if page_number:
+                chunk_metadata["page"] = str(page_number)
             
             chunk_metadatas.append(chunk_metadata)
         
@@ -134,7 +152,7 @@ def store_document_chunks(document_id, chunks, metadata):
                 metadatas=chunk_metadatas[i:end_idx]
             )
         
-        logger.info(f"Stored {len(chunks)} chunks for document {document_id}")
+        logger.info(f"Stored {len(chunks)} chunks for document {document_id} with page numbers")
         return True
         
     except Exception as e:
@@ -154,7 +172,7 @@ def search_documents(query, user_id="default_user", filters=None, n_results=5, i
         include_metadata (bool): Metadaten einschließen
     
     Returns:
-        list: Liste der relevanten Chunks
+        list: Liste der relevanten Chunks mit Seitenzahlen
     """
     try:
         # Benutzer-spezifische Collection abrufen
@@ -209,17 +227,28 @@ def search_documents(query, user_id="default_user", filters=None, n_results=5, i
                             # Ersten Autor mit et al. für mehrere Autoren
                             if len(authors) == 1:
                                 author_text = authors[0].get('name', '')
+                                if ',' in author_text:
+                                    author_text = author_text.split(',')[0]
                             else:
-                                first_author = authors[0].get('name', '').split(',')[0] if ',' in authors[0].get('name', '') else authors[0].get('name', '')
+                                first_author = authors[0].get('name', '')
+                                if ',' in first_author:
+                                    first_author = first_author.split(',')[0]
                                 author_text = f"{first_author} et al."
                             
-                            source = f"{author_text} ({metadata.get('publication_date', '').split('-')[0]})"
+                            # Jahr aus Datum extrahieren
+                            year = ""
+                            if metadata.get('publication_date'):
+                                year_match = re.search(r'(\d{4})', metadata.get('publication_date', ''))
+                                if year_match:
+                                    year = year_match.group(1)
+                            
+                            source = f"{author_text} ({year})"
+                            
+                            # Seitenzahl hinzufügen, wenn vorhanden
+                            if metadata.get('page'):
+                                source += f", S. {metadata.get('page')}"
                         else:
                             source = metadata.get('title')
-                            
-                        # Seitenzahl hinzufügen, wenn vorhanden
-                        if metadata.get('page'):
-                            source += f", S. {metadata.get('page')}"
                     
                     result_item["source"] = source
                     result_item["document_id"] = metadata.get('document_id')

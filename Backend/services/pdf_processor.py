@@ -8,6 +8,7 @@ import pytesseract
 from PIL import Image
 import io
 import numpy as np
+import json
 
 # PyMuPDF Importierung - direkt mit Fehlerbehandlung
 try:
@@ -38,7 +39,7 @@ class PDFProcessor:
     @staticmethod
     def extract_text_from_pdf(pdf_file, max_pages=0, perform_ocr=False):
         """
-        Extrahiert Text aus einer PDF-Datei
+        Extrahiert Text aus einer PDF-Datei mit verbesserter Seitenverfolgung
         
         Args:
             pdf_file: PDF-Datei (Dateipfad oder Bytes)
@@ -46,7 +47,7 @@ class PDFProcessor:
             perform_ocr: OCR für Seiten mit wenig Text durchführen
         
         Returns:
-            dict: Ergebnis mit Text und Seiteninfos
+            dict: Ergebnis mit Text und detaillierten Seiteninfos
         """
         try:
             # Temporäre Datei für Bytes-Input erstellen
@@ -79,18 +80,25 @@ class PDFProcessor:
             for i in range(pages_to_process):
                 page = doc[i]
                 
-                # Seitenmetadaten
+                # Seitenmetadaten mit Seitenzahl
                 page_info = {
                     'pageNumber': i + 1,
                     'width': page.rect.width,
                     'height': page.rect.height,
-                    'text': ''
+                    'text': '',
+                    'startPosition': len(result['text']), # Start-Position im Gesamttext
                 }
                 
                 # Text extrahieren
                 page_text = page.get_text()
                 page_info['text'] = page_text
+                page_info['length'] = len(page_text)
+                
+                # Zum Gesamttext hinzufügen
                 result['text'] += page_text + ' '
+                
+                # Endposition aktualisieren
+                page_info['endPosition'] = len(result['text']) - 1
                 
                 # Prüfen, ob die Seite wenig Text enthält -> OCR-Kandidat
                 if perform_ocr and len(page_text.strip()) < 100:
@@ -229,6 +237,79 @@ class PDFProcessor:
                 return matches.group(1).replace('-', '').replace(' ', '')
         
         return None
+    
+    @staticmethod
+    def chunk_text_with_pages(text, pages_info, chunk_size=1000, overlap_size=200):
+        """
+        Teilt Text in Chunks mit Seitenzuordnung und Überlappung
+        
+        Args:
+            text: Vollständiger Text
+            pages_info: Liste mit Seiteninformationen inkl. Start- und Endposition
+            chunk_size: Zielgröße der Chunks in Zeichen
+            overlap_size: Überlappungsgröße in Zeichen
+        
+        Returns:
+            list: Liste von Textchunks mit Seitenzuordnung
+        """
+        if not text or chunk_size <= 0:
+            return []
+        
+        chunks = []
+        
+        # Falls Text kleiner als chunk_size ist, als einzelnen Chunk zurückgeben
+        if len(text) <= chunk_size:
+            # Bestimme Seitennummer
+            page_number = None
+            for page in pages_info:
+                if 0 >= page['startPosition'] and len(text) <= page['endPosition']:
+                    page_number = page['pageNumber']
+                    break
+            
+            return [{'text': text, 'page_number': page_number or 1}]
+        
+        # Erstelle eine Map von Textposition zu Seitenzahl
+        pos_to_page = {}
+        for page in pages_info:
+            for pos in range(page['startPosition'], page['endPosition'] + 1):
+                pos_to_page[pos] = page['pageNumber']
+        
+        # Text in semantisch sinnvolle Chunks aufteilen
+        semantic_chunks = PDFProcessor.chunk_text_semantic(text, chunk_size, overlap_size)
+        
+        # Für jeden Chunk die Seitennummer bestimmen
+        current_pos = 0
+        for chunk in semantic_chunks:
+            # Position des Chunks im Originaltext bestimmen
+            chunk_start = text.find(chunk, current_pos)
+            if chunk_start == -1:
+                # Fallback, wenn exakte Position nicht gefunden wird
+                chunk_start = current_pos
+            
+            chunk_end = min(chunk_start + len(chunk), len(text) - 1)
+            current_pos = chunk_end - overlap_size if overlap_size > 0 else chunk_end
+            
+            # Seitenzählung für diesen Chunk
+            page_counts = {}
+            for pos in range(chunk_start, chunk_end + 1):
+                if pos in pos_to_page:
+                    page_number = pos_to_page[pos]
+                    page_counts[page_number] = page_counts.get(page_number, 0) + 1
+            
+            # Häufigste Seitennummer für diesen Chunk
+            most_common_page = None
+            max_count = 0
+            for page_num, count in page_counts.items():
+                if count > max_count:
+                    max_count = count
+                    most_common_page = page_num
+            
+            chunks.append({
+                'text': chunk,
+                'page_number': most_common_page or 1  # Default to page 1 if no mapping found
+            })
+        
+        return chunks
     
     @staticmethod
     def chunk_text(text, chunk_size=1000, overlap_size=200):
@@ -403,3 +484,55 @@ class PDFProcessor:
             logger.error(f"Error in semantic chunking: {e}")
             # Fallback zur einfachen Chunking-Methode
             return PDFProcessor.chunk_text(text, chunk_size, overlap_size)
+        
+    @staticmethod
+    def process_file(file_path, settings=None):
+        """
+        Verarbeitet eine PDF-Datei vollständig: Extraktion, Chunking, Metadaten
+        
+        Args:
+            file_path: Pfad zur PDF-Datei
+            settings: Verarbeitungseinstellungen (max_pages, chunk_size, etc.)
+        
+        Returns:
+            dict: Ergebnis mit Text, Chunks, Metadaten und Seitenzuordnung
+        """
+        if settings is None:
+            settings = {
+                'maxPages': 0,
+                'chunkSize': 1000,
+                'chunkOverlap': 200,
+                'performOCR': False
+            }
+        
+        # Text extrahieren
+        extraction_result = PDFProcessor.extract_text_from_pdf(
+            file_path, 
+            max_pages=settings.get('maxPages', 0),
+            perform_ocr=settings.get('performOCR', False)
+        )
+        
+        # Extrahiere DOI, ISBN
+        extracted_text = extraction_result['text']
+        doi = PDFProcessor.extract_doi(extracted_text)
+        isbn = PDFProcessor.extract_isbn(extracted_text)
+        
+        # Chunks mit Seitenzuordnung erstellen
+        chunks_with_pages = PDFProcessor.chunk_text_with_pages(
+            extracted_text,
+            extraction_result['pages'],
+            chunk_size=settings.get('chunkSize', 1000),
+            overlap_size=settings.get('chunkOverlap', 200)
+        )
+        
+        return {
+            'text': extracted_text,
+            'chunks': chunks_with_pages,
+            'metadata': {
+                'doi': doi,
+                'isbn': isbn,
+                'totalPages': extraction_result['totalPages'],
+                'processedPages': extraction_result['processedPages']
+            },
+            'pages': extraction_result['pages']
+        }

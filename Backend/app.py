@@ -49,12 +49,31 @@ def create_app():
     """Create and configure the Flask application."""
     app = Flask(__name__)
     
-    # Configure app
-    app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-    app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
+    # Load configuration from environment variables
+    app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER', './uploads')
+    app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_CONTENT_LENGTH', 20 * 1024 * 1024))
     
-    # Enable CORS for all routes
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    # Enable CORS
+    CORS(app)
+    
+    # Register blueprints
+    app.register_blueprint(documents_bp)
+    app.register_blueprint(metadata_bp)
+    app.register_blueprint(query_bp)
+    
+    # Ensure upload directory exists
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    
+    # Ensure Chroma DB directory exists
+    chroma_dir = os.environ.get('CHROMA_PERSIST_DIR', './data/chroma')
+    os.makedirs(chroma_dir, exist_ok=True)
+    
+    # Root route for health check
+    @app.route('/')
+    def health_check():
+        return {'status': 'ok', 'version': '1.0.0'}
+    
+    return app
     
     # Helper functions
     def allowed_file(filename):
@@ -643,5 +662,6 @@ def create_app():
     return app
 
 if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
     app = create_app()
-    app.run(debug=True, port=5000)
+    app.run(host='0.0.0.0', port=port, debug=True)

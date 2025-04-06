@@ -177,63 +177,46 @@ def save_document():
             file.save(file_path)
             
             # Verarbeitungseinstellungen
-            max_pages = int(document_data.get('maxPages', 0))
-            perform_ocr = bool(document_data.get('performOCR', False))
-            chunk_size = int(document_data.get('chunkSize', 1000))
-            chunk_overlap = int(document_data.get('chunkOverlap', 200))
-            
-            # PDF verarbeiten
-            extraction_result = PDFProcessor.extract_text_from_pdf(
-                file_path, 
-                max_pages=max_pages,
-                perform_ocr=perform_ocr
-            )
-            
-            # Extrahierten Text speichern
-            extracted_text = extraction_result['text']
-            
-            # Chunks erstellen
-            chunks = PDFProcessor.chunk_text_semantic(
-                extracted_text,
-                chunk_size=chunk_size,
-                overlap_size=chunk_overlap
-            )
-            
-            # DOI und ISBN extrahieren
-            doi = PDFProcessor.extract_doi(extracted_text)
-            isbn = PDFProcessor.extract_isbn(extracted_text)
-            
-            pdf_metadata = {
-                "doi": doi,
-                "isbn": isbn,
-                "pages": extraction_result['pages'],
-                "totalPages": extraction_result['totalPages'],
-                "processedPages": extraction_result['processedPages']
+            processing_settings = {
+                'maxPages': int(document_data.get('maxPages', 0)),
+                'performOCR': bool(document_data.get('performOCR', False)),
+                'chunkSize': int(document_data.get('chunkSize', 1000)),
+                'chunkOverlap': int(document_data.get('chunkOverlap', 200))
             }
+            
+            # Verbesserte PDF-Verarbeitung mit Seitenverfolgung
+            processing_result = PDFProcessor.process_file(file_path, processing_settings)
+            
+            # Extrahierte Daten speichern
+            extracted_text = processing_result['text']
+            chunks = processing_result['chunks']  # Enthält jetzt Chunks mit Seitenzahlen
+            
+            # Metadaten aus dem PDF extrahieren
+            pdf_metadata = processing_result['metadata']
             
             # Metadaten über DOI oder ISBN abrufen, falls nicht bereits angegeben
             metadata = document_data.get('metadata', {})
             
-            if not metadata.get('title') and (doi or isbn):
+            if not metadata.get('title') and (pdf_metadata.get('doi') or pdf_metadata.get('isbn')):
                 fetched_metadata = None
                 
                 # Zuerst DOI versuchen
-                if doi:
+                if pdf_metadata.get('doi'):
                     try:
-                        response = get_doi_metadata(doi)
-                        if response and response.status_code == 200:
+                        response = get_doi_metadata(pdf_metadata['doi'])
+                        if hasattr(response, 'status_code') and response.status_code == 200:
                             fetched_metadata = response.get_json()
                     except Exception as e:
-                        logger.warning(f"Failed to fetch metadata for DOI {doi}: {e}")
+                        logger.warning(f"Failed to fetch metadata for DOI {pdf_metadata['doi']}: {e}")
                 
                 # Falls keine DOI-Metadaten, ISBN versuchen
-                if not fetched_metadata and isbn:
+                if not fetched_metadata and pdf_metadata.get('isbn'):
                     try:
-                        response = get_isbn_metadata(isbn)
-                        if response and response.status_code == 200:
+                        response = get_isbn_metadata(pdf_metadata['isbn'])
+                        if hasattr(response, 'status_code') and response.status_code == 200:
                             fetched_metadata = response.get_json()
                     except Exception as e:
-                        logger.warning(f"Failed to fetch metadata for ISBN {isbn}: {e}")
+                        logger.warning(f"Failed to fetch metadata for ISBN {pdf_metadata['isbn']}: {e}")
                 
                 # Gefundene Metadaten verwenden
                 if fetched_metadata:
@@ -276,14 +259,11 @@ def save_document():
             }
         }
         
-        # Optional: Volltext und Chunks speichern (in einer echten Implementierung)
-        # document['fullText'] = extracted_text
-        
         # In Vektordatenbank speichern
         if chunks and len(chunks) > 0:
             store_success = store_document_chunks(
                 document_id=document_id,
-                chunks=chunks,
+                chunks=chunks,  # Enthält jetzt Seitenzahlen
                 metadata={
                     "user_id": user_id,
                     "title": document["title"],
@@ -294,21 +274,23 @@ def save_document():
                     "publisher": document["publisher"],
                     "doi": document["doi"],
                     "isbn": document["isbn"],
-                    "pages": pdf_metadata.get("pages", [])
+                    "volume": document["volume"],
+                    "issue": document["issue"],
+                    "pages": document["pages"]
                 }
             )
             
             if not store_success:
                 logger.warning(f"Failed to store chunks for document {document_id} in vector database")
+                # Trotzdem fortfahren, damit der Benutzer die Metadaten hat
         
-        # TODO: In Datenbank speichern
+        # TODO: In relationaler Datenbank speichern (SQLite oder MySQL)
         # In einer echten Implementierung würde das Dokument hier in einer Datenbank gespeichert
         
-        # Aufräumen: Temporäre Datei löschen
-        if file_path and os.path.exists(file_path):
-            # In einer echten Implementierung könnte die Datei behalten werden
-            # Hier löschen wir sie nach der Verarbeitung
-            os.unlink(file_path)
+        # Aufräumen: Temporäre Datei löschen (optional)
+        # In einer realen Implementierung würdest du die Datei behalten oder in einen persistenten Speicher verschieben
+        # if file_path and os.path.exists(file_path):
+        #     os.unlink(file_path)
         
         return jsonify(document)
     

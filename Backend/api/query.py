@@ -77,17 +77,107 @@ def query_documents_api():
                 "query": query_text
             })
         
-        # LLM-Antwort generieren
-        llm_response = generate_llm_response(
-            query_text=query_text,
-            search_results=search_results,
-            citation_style=citation_style,
-            use_direct_quotes=use_direct_quotes,
-            include_page_numbers=include_page_numbers
-        )
+        # Ergebnisse mit Zitationsstil und Seitenzahlen formatieren
+        formatted_results = []
+        bibliography_entries = []
+        documents_for_bibliography = {}
         
-        # Antwort zurückgeben
-        return jsonify(llm_response)
+        for result in search_results:
+            # Metadaten extrahieren
+            metadata = result.get('metadata', {})
+            document_id = metadata.get('document_id')
+            
+            # Citation für dieses Ergebnis erstellen
+            authors = []
+            if metadata.get('authors'):
+                try:
+                    authors = json.loads(metadata.get('authors', '[]'))
+                except:
+                    # Fallback bei ungültigem JSON
+                    authors = []
+            
+            # Autor(en) für Kurzzitat formatieren
+            author_text = ""
+            if authors:
+                if len(authors) == 1:
+                    author_name = authors[0].get('name', '')
+                    if ',' in author_name:
+                        author_text = author_name.split(',')[0].strip()
+                    else:
+                        parts = author_name.split()
+                        author_text = parts[-1] if parts else author_name
+                else:
+                    # Bei mehreren Autoren: Erster Autor et al.
+                    first_author = authors[0].get('name', '')
+                    if ',' in first_author:
+                        author_text = first_author.split(',')[0].strip()
+                    else:
+                        parts = first_author.split()
+                        author_text = parts[-1] if parts else first_author
+                    
+                    author_text += " et al."
+            
+            # Jahr aus Publikationsdatum extrahieren
+            year = ""
+            if metadata.get('publication_date'):
+                year_match = re.search(r'(\d{4})', metadata.get('publication_date', ''))
+                if year_match:
+                    year = year_match.group(1)
+            
+            # Zitat mit Seitenzahl zusammenbauen
+            citation = f"({author_text}"
+            if year:
+                citation += f", {year}"
+            
+            # Seitenzahl hinzufügen, falls vorhanden und gewünscht
+            if include_page_numbers and metadata.get('page'):
+                citation += f", S. {metadata.get('page')}"
+            
+            citation += ")"
+            
+            # Ergebnis mit Zitat speichern
+            formatted_results.append({
+                "text": result.get('text', ''),
+                "source": citation,
+                "metadata": metadata,
+                "document_id": document_id
+            })
+            
+            # Für jeden eindeutigen Dokumenten-Typ eine vollständige Zitation erstellen
+            if document_id not in documents_for_bibliography:
+                documents_for_bibliography[document_id] = metadata
+        
+        # Bibliographie erstellen
+        for doc_metadata in documents_for_bibliography.values():
+            citation = format_citation(doc_metadata, citation_style)
+            if citation and citation not in bibliography_entries:
+                bibliography_entries.append(citation)
+        
+        # LLM-Antwort generieren, falls konfiguriert
+        if LLM_API_KEY:
+            llm_response = generate_llm_response(
+                query_text=query_text,
+                search_results=formatted_results,
+                citation_style=citation_style,
+                use_direct_quotes=use_direct_quotes,
+                include_page_numbers=include_page_numbers
+            )
+            
+            # Wenn die LLM-Antwort erfolgreich war, verwende diese
+            if llm_response:
+                return jsonify({
+                    "results": llm_response,
+                    "bibliography": bibliography_entries,
+                    "query": query_text
+                })
+        
+        # Antwort ohne LLM oder als Fallback zurückgeben
+        # Begrenzt auf die angeforderte Anzahl von Ergebnissen
+        return jsonify({
+            "results": formatted_results[:n_results],
+            "bibliography": bibliography_entries,
+            "query": query_text
+        })
     
     except Exception as e:
         logger.error(f"Error querying documents: {e}")
@@ -106,65 +196,50 @@ def generate_llm_response(query_text, search_results, citation_style='apa', use_
         include_page_numbers: Seitenzahlen einbeziehen
     
     Returns:
-        dict: LLM-Antwort mit Ergebnissen und Bibliographie
+        list: LLM-Antwort mit Ergebnissen und Quellenangaben
     """
     try:
         # Wenn kein API-Key oder URL, simulierte Antwort zurückgeben
         if not LLM_API_KEY or LLM_API_URL == '':
-            logger.warning("No LLM API configuration, using simulated response")
-            return simulate_llm_response(search_results, citation_style)
+            logger.warning("No LLM API configuration, using search results directly")
+            return search_results
         
         # Kontext für das LLM vorbereiten
-        context = []
-        documents_for_bibliography = {}
+        context_items = []
         
-        for result in search_results:
-            context.append(f"CONTENT: {result['text']}")
-            
-            # Quelle für Bibliographie merken
-            if 'metadata' in result and 'document_id' in result['metadata']:
-                doc_id = result['metadata']['document_id']
-                if doc_id not in documents_for_bibliography:
-                    documents_for_bibliography[doc_id] = {
-                        "title": result['metadata'].get('title', ''),
-                        "authors": result['metadata'].get('authors', '[]'),
-                        "publication_date": result['metadata'].get('publication_date', ''),
-                        "journal": result['metadata'].get('journal', ''),
-                        "publisher": result['metadata'].get('publisher', ''),
-                        "doi": result['metadata'].get('doi', ''),
-                        "isbn": result['metadata'].get('isbn', ''),
-                        "type": result['metadata'].get('type', 'other')
-                    }
-                    
-                    # JSON-String zu Liste parsen, falls nötig
-                    if isinstance(documents_for_bibliography[doc_id]['authors'], str):
-                        try:
-                            documents_for_bibliography[doc_id]['authors'] = json.loads(documents_for_bibliography[doc_id]['authors'])
-                        except:
-                            documents_for_bibliography[doc_id]['authors'] = []
+        for i, result in enumerate(search_results):
+            context_items.append(f"Information #{i+1}: {result['text']}")
+            context_items.append(f"Citation #{i+1}: {result['source']}")
         
-        # Anweisungen für das LLM
+        context = "\n".join(context_items)
+        
+        # Anweisungen für Zitationsstil und Direktzitate
+        citation_instructions = f"Use {citation_style.upper()} citation style."
+        if not use_direct_quotes:
+            citation_instructions += " Avoid direct quotes, paraphrase the information instead."
+        if include_page_numbers:
+            citation_instructions += " Include page numbers in citations when available."
+        
+        # Systemanweisung für das LLM
         system_prompt = f"""
-        Als wissenschaftlicher Assistent sollst du Fragen basierend auf den bereitgestellten Dokumenten beantworten.
-        
-        Berücksichtige bei deiner Antwort folgende Regeln:
-        1. Verwende NUR die Informationen aus den bereitgestellten Dokumenten.
-        2. Wenn die Dokumente keine ausreichenden Informationen zur Beantwortung der Frage enthalten, sage das offen.
-        3. Zitationsstil: {citation_style.upper()}
-        4. {'' if use_direct_quotes else 'Vermeide direkte Zitate. Paraphrasiere stattdessen die Informationen.'}
-        5. {'' if include_page_numbers else 'Lasse Seitenzahlen in den Zitaten weg.'}
-        6. Gib für jede wichtige Information ein Kurzzitat im Format (Autor, Jahr{', S. XX' if include_page_numbers else ''}) an.
-        7. Formatiere deine Antwort als Liste von Abschnitten, wobei jeder Abschnitt aus dem Text und der dazugehörigen Quellenangabe besteht.
-        8. Die Antwort sollte objektiv und informativ sein.
+        You are an academic assistant that helps researchers with literature queries.
+        Answer the question based ONLY on the provided information.
+        For each piece of information you use, include the citation in the format provided.
+        {citation_instructions}
+        Do not make up or infer information that is not explicitly stated in the provided context.
+        Format your answer as a coherent paragraph or structured response.
         """
         
-        # Prompt für das LLM
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Frage: {query_text}\n\nDokumentabschnitte:\n" + "\n\n".join(context)}
-        ]
+        # Benutzerprompt mit Kontext
+        user_prompt = f"""
+        Question: {query_text}
         
-        # LLM-Anfrage
+        Use ONLY the following information to answer the question:
+        
+        {context}
+        """
+        
+        # LLM-Anfrage senden
         response = requests.post(
             LLM_API_URL,
             headers={
@@ -173,114 +248,59 @@ def generate_llm_response(query_text, search_results, citation_style='apa', use_
             },
             json={
                 "model": LLM_MODEL,
-                "messages": messages,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
                 "temperature": 0.3,  # Niedrige Temperatur für präzisere Antworten
                 "max_tokens": 1000
-            }
+            },
+            timeout=30  # 30 Sekunden Timeout
         )
         
-        if response.status_code != 200:
-            logger.error(f"LLM API error: {response.text}")
-            raise Exception(f"LLM API error: {response.status_code}")
-        
-        llm_data = response.json()
-        llm_text = llm_data['choices'][0]['message']['content']
-        
-        # LLM-Antwort in Teile aufteilen und strukturieren
-        results = []
-        # Einfache Parsing-Logik - in einer echten Implementierung wäre dies robuster
-        sections = llm_text.split('\n\n')
-        for section in sections:
-            if not section.strip():
-                continue
+        # Antwort verarbeiten
+        if response.status_code == 200:
+            llm_data = response.json()
+            llm_text = llm_data['choices'][0]['message']['content']
+            
+            # LLM-Antwort in Absätze aufteilen
+            paragraphs = re.split(r'\n\s*\n', llm_text)
+            
+            # Strukturierte Ergebnisse erstellen
+            structured_results = []
+            
+            for paragraph in paragraphs:
+                if not paragraph.strip():
+                    continue
                 
-            # Quelle extrahieren (falls vorhanden)
-            source_match = re.search(r'\(([^)]+)\)$', section)
-            if source_match:
-                text_part = section[:source_match.start()].strip()
-                source_part = source_match.group(1)
-                results.append({"text": text_part, "source": source_part})
-            else:
-                results.append({"text": section, "source": ""})
-        
-        # Bibliographie generieren
-        bibliography = []
-        for doc_id, doc_info in documents_for_bibliography.items():
-            # Zitation im gewählten Stil formatieren
-            citation = format_citation(
-                doc_info,
-                style=citation_style
-            )
-            if citation and citation not in bibliography:
-                bibliography.append(citation)
-        
-        return {
-            "results": results,
-            "bibliography": bibliography,
-            "query": query_text
-        }
+                # Nach Zitaten suchen (Muster: Text (Autor, Jahr, S. X))
+                citation_matches = list(re.finditer(r'\((?:[^()]+,\s*)?[^()]+(?:,\s*S\.\s*\d+)?\)', paragraph))
+                
+                if citation_matches:
+                    # Text und Zitat trennen
+                    last_match = citation_matches[-1]
+                    text = paragraph[:last_match.start()].strip()
+                    source = last_match.group(0)
+                    
+                    structured_results.append({
+                        "text": text,
+                        "source": source
+                    })
+                else:
+                    # Falls kein Zitat gefunden wurde, den ganzen Absatz verwenden
+                    structured_results.append({
+                        "text": paragraph,
+                        "source": ""
+                    })
+            
+            return structured_results
+        else:
+            logger.error(f"LLM API error: {response.status_code} - {response.text}")
+            return None
             
     except Exception as e:
         logger.error(f"Error generating LLM response: {e}")
-        return simulate_llm_response(search_results, citation_style)
-
-
-def simulate_llm_response(search_results, citation_style):
-    """
-    Simuliert eine LLM-Antwort wenn keine LLM-API verfügbar ist
-    
-    Args:
-        search_results: Suchergebnisse
-        citation_style: Zitationsstil
-    
-    Returns:
-        dict: Simulierte Antwort
-    """
-    results = []
-    bibliography = []
-    documents_for_bibliography = {}
-    
-    # Direkt die Suchergebnisse als Antworten verwenden
-    for result in search_results:
-        result_item = {
-            "text": result["text"],
-            "source": result.get("source", "")
-        }
-        results.append(result_item)
-        
-        # Dokumente für Bibliographie sammeln
-        if 'metadata' in result and 'document_id' in result['metadata']:
-            doc_id = result['metadata']['document_id']
-            if doc_id not in documents_for_bibliography:
-                documents_for_bibliography[doc_id] = {
-                    "title": result['metadata'].get('title', ''),
-                    "authors": result['metadata'].get('authors', '[]'),
-                    "publication_date": result['metadata'].get('publication_date', ''),
-                    "journal": result['metadata'].get('journal', ''),
-                    "publisher": result['metadata'].get('publisher', ''),
-                    "doi": result['metadata'].get('doi', ''),
-                    "isbn": result['metadata'].get('isbn', ''),
-                    "type": result['metadata'].get('type', 'other')
-                }
-                
-                # JSON-String zu Liste parsen, falls nötig
-                if isinstance(documents_for_bibliography[doc_id]['authors'], str):
-                    try:
-                        documents_for_bibliography[doc_id]['authors'] = json.loads(documents_for_bibliography[doc_id]['authors'])
-                    except:
-                        documents_for_bibliography[doc_id]['authors'] = []
-    
-    # Bibliographie generieren
-    for doc_id, doc_info in documents_for_bibliography.items():
-        citation = format_citation(doc_info, style=citation_style)
-        if citation:
-            bibliography.append(citation)
-    
-    return {
-        "results": results[:5],  # Beschränkung auf 5 Ergebnisse
-        "bibliography": bibliography,
-        "query": "Simulierte Antwort (kein LLM verfügbar)"
-    }
+        return None
 
 
 @query_bp.route('/citation-styles', methods=['GET'])

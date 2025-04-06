@@ -289,11 +289,25 @@ const FileUpload = () => {
     setProcessingStage('Speichere in Datenbank...');
     
     try {
-      // Dokumentdaten für Speicherung vorbereiten
+      // Make sure all chunks have page numbers
+      const chunksWithPages = chunks.map(chunk => {
+        // If chunk is already properly formatted with page_number
+        if (typeof chunk === 'object' && chunk.hasOwnProperty('text') && chunk.hasOwnProperty('page_number')) {
+          return chunk;
+        }
+        
+        // If it's just a text string, try to guess the page (fallback to page 1)
+        return {
+          text: typeof chunk === 'string' ? chunk : chunk.text || '',
+          page_number: chunk.page_number || 1
+        };
+      });
+      
+      // Prepare document data with enhanced page tracking
       const documentData = {
         metadata: {
           ...metadata,
-          // Datumsformat korrigieren für alle Datumsfelder
+          // Format dates properly
           publicationDate: formatToISODate(metadata.publicationDate) || new Date().toISOString().split('T')[0],
           date: metadata.date ? formatToISODate(metadata.date) : undefined,
           conferenceDate: metadata.conferenceDate ? formatToISODate(metadata.conferenceDate) : undefined,
@@ -301,30 +315,27 @@ const FileUpload = () => {
           accessDate: metadata.accessDate ? formatToISODate(metadata.accessDate) : undefined
         },
         text: extractedText,
-        chunks: chunks,
+        chunks: chunksWithPages, // Enhanced chunks with page numbers
         fileName: fileName,
         fileSize: file.size,
         uploadDate: new Date().toISOString(),
-        chunkSettings: {
-          chunkSize: settings.chunkSize,
-          chunkOverlap: settings.chunkOverlap
-        }
+        // Processing settings
+        maxPages: settings.maxPages,
+        performOCR: settings.performOCR,
+        chunkSize: settings.chunkSize,
+        chunkOverlap: settings.chunkOverlap
       };
-      
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('data', JSON.stringify(documentData));
-
-      // In Datenbank speichern
+  
+      // Save document and file to the server
       const savedDoc = await documentsApi.saveDocument(documentData, file);
-    
-      console.log("Dokument erfolgreich gespeichert:", savedDoc);
+  
+      console.log("Document successfully saved:", savedDoc);
       
       setSaveSuccess(true);
-      setCurrentStep(3); // Zum finalen Schritt
+      setCurrentStep(3); // Move to final step
     } catch (error) {
-      console.error('Fehler beim Speichern des Dokuments:', error);
-      setError(`Fehler beim Speichern des Dokuments: ${error.message || 'Unbekannter Fehler'}`);
+      console.error('Error saving document:', error);
+      setError(`Error saving document: ${error.message || 'Unknown error'}`);
       setSnackbarOpen(true);
     } finally {
       setProcessing(false);

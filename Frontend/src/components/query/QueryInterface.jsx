@@ -184,7 +184,7 @@ const QueryInterface = () => {
     e.preventDefault();
     
     if (!query.trim()) {
-      setError('Bitte gib eine Abfrage ein');
+      setError('Please enter a query');
       return;
     }
     
@@ -196,6 +196,7 @@ const QueryInterface = () => {
     try {
       const startTime = performance.now();
       
+      // Make API request with all necessary parameters
       const response = await queryApi.queryDocuments({
         query: query.trim(),
         citation_style: citationStyle,
@@ -206,13 +207,33 @@ const QueryInterface = () => {
       });
       
       const endTime = performance.now();
-      setLastQueryTime((endTime - startTime) / 1000); // In Sekunden umrechnen
+      setLastQueryTime((endTime - startTime) / 1000); // Convert to seconds
       
-      setResults(response.results || []);
+      // Process results
+      const processedResults = response.results.map(result => {
+        // Make sure the source is properly formatted with page numbers
+        let source = result.source;
+        
+        // If source doesn't already have page numbers but should have them
+        if (querySettings.includePageNumbers && 
+            !source.includes("S.") && 
+            result.metadata && 
+            result.metadata.page) {
+          // Add page number to the citation
+          source = source.replace(/\)$/, `, S. ${result.metadata.page})`);
+        }
+        
+        return {
+          ...result,
+          source
+        };
+      });
+      
+      setResults(processedResults);
       setBibliography(response.bibliography || []);
     } catch (error) {
-      console.error('Fehler bei der Dokumentenabfrage:', error);
-      setError(error.response?.data?.error || 'Fehler bei der Dokumentenabfrage');
+      console.error('Error querying documents:', error);
+      setError(error.response?.data?.error || 'Error querying documents');
     } finally {
       setLoading(false);
     }

@@ -2,17 +2,15 @@
 import * as pdfjs from 'pdfjs-dist';
 import { createWorker } from 'tesseract.js';
 
-
 // Set PDF.js worker source
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
-// pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
 /**
- * Comprehensive PDF Processing service with text extraction, OCR, metadata extraction and chunking
+ * Enhanced PDF Processing service with text extraction, OCR, metadata extraction and chunking with page tracking
  */
 class PDFService {
   /**
-   * Extracts text from a PDF file with progress reporting
+   * Extracts text from a PDF file with progress reporting and page tracking
    * @param {File|Blob} pdfFile - The PDF file
    * @param {Object} options - Extraction options
    * @param {number} options.maxPages - Maximum pages to scan (0 = all pages)
@@ -46,7 +44,7 @@ class PDFService {
         processedPages: pagesToProcess
       };
       
-      // Extract text from each page
+      // Extract text from each page with position tracking
       for (let i = 1; i <= pagesToProcess; i++) {
         // Report progress
         if (progressCallback) {
@@ -65,13 +63,20 @@ class PDFService {
         // Extract text
         const pageText = textContent.items.map(item => item.str).join(' ');
         
+        // Track position in the overall text
+        const startPosition = result.text.length;
+        
         // Add to results
         result.text += pageText + ' ';
+        
+        // Store page information with position
         result.pages.push({
           pageNumber: i,
           text: pageText,
           width: viewport.width,
-          height: viewport.height
+          height: viewport.height,
+          startPosition: startPosition,
+          endPosition: result.text.length - 1
         });
       }
       
@@ -212,8 +217,90 @@ class PDFService {
   }
   
   /**
-   * Split document text into smaller chunks with configurable size and overlap
+   * Split document text into smaller chunks with page tracking
    * @param {string} text - Full document text
+   * @param {Array} pages - Page information with text ranges
+   * @param {number} chunkSize - Target chunk size in characters
+   * @param {number} overlapSize - Overlap size in characters
+   * @returns {Array} - Array of text chunks with page numbers
+   */
+  chunkTextWithPages(text, pages, chunkSize = 1000, overlapSize = 200) {
+    if (!text || chunkSize <= 0) {
+      return [];
+    }
+    
+    const chunks = [];
+    
+    // If text is smaller than chunk size, return as single chunk with page info
+    if (text.length <= chunkSize) {
+      // Find page that contains this text
+      let pageNumber = 1;
+      for (const page of pages) {
+        if (text.length >= page.startPosition && text.length <= page.endPosition) {
+          pageNumber = page.pageNumber;
+          break;
+        }
+      }
+      
+      return [{
+        text: text,
+        page_number: pageNumber
+      }];
+    }
+    
+    // Create position to page mapping
+    const posToPage = new Map();
+    for (const page of pages) {
+      for (let pos = page.startPosition; pos <= page.endPosition; pos++) {
+        posToPage.set(pos, page.pageNumber);
+      }
+    }
+    
+    // Split text into chunks
+    const textChunks = this.chunkText(text, chunkSize, overlapSize);
+    
+    // Add page information to each chunk
+    let startPosition = 0;
+    for (const chunk of textChunks) {
+      // Find chunk position in the original text
+      const chunkStart = text.indexOf(chunk, startPosition);
+      if (chunkStart === -1) continue;
+      
+      const chunkEnd = chunkStart + chunk.length - 1;
+      startPosition = chunkEnd - overlapSize + 1;
+      
+      // Count pages in this chunk
+      const pageCounts = new Map();
+      for (let pos = chunkStart; pos <= chunkEnd; pos++) {
+        const pageNum = posToPage.get(pos);
+        if (pageNum) {
+          pageCounts.set(pageNum, (pageCounts.get(pageNum) || 0) + 1);
+        }
+      }
+      
+      // Find most frequent page number
+      let mostFrequentPage = 1;
+      let maxCount = 0;
+      
+      pageCounts.forEach((count, page) => {
+        if (count > maxCount) {
+          maxCount = count;
+          mostFrequentPage = page;
+        }
+      });
+      
+      chunks.push({
+        text: chunk,
+        page_number: mostFrequentPage
+      });
+    }
+    
+    return chunks;
+  }
+  
+  /**
+   * Split document text into chunks based on natural breaks
+   * @param {string} text - Text to chunk
    * @param {number} chunkSize - Target chunk size in characters
    * @param {number} overlapSize - Overlap size in characters
    * @returns {Array} - Array of text chunks
@@ -236,24 +323,30 @@ class PDFService {
       // Calculate end index based on chunk size
       let endIndex = startIndex + chunkSize;
       
-      // If we're at the end of the text, just use the remaining text
+      // Adjust end index to not exceed text length
       if (endIndex >= text.length) {
-        chunks.push(text.substring(startIndex));
-        break;
+        endIndex = text.length;
+      } else {
+        // Try to find a natural break point (sentence or paragraph end)
+        const naturalBreakIndex = this.findNaturalBreakPoint(text, endIndex);
+        endIndex = naturalBreakIndex;
       }
       
-      // Try to find a natural break point (sentence or paragraph end)
-      const naturalBreakIndex = this.findNaturalBreakPoint(text, endIndex);
+      // Extract chunk
+      const chunk = text.substring(startIndex, endIndex);
+      chunks.push(chunk);
       
-      // Add chunk using the natural break point
-      chunks.push(text.substring(startIndex, naturalBreakIndex));
+      // Move start index for next chunk, accounting for overlap
+      startIndex = endIndex - overlapSize;
       
-      // Move start index to next chunk, accounting for overlap
-      startIndex = naturalBreakIndex - overlapSize;
+      // Ensure we're not going backward or stuck in a loop
+      if (startIndex < 0 || startIndex >= endIndex) {
+        startIndex = endIndex;
+      }
       
-      // Ensure we're not going backward
-      if (startIndex < 0 || startIndex <= chunks.length) {
-        startIndex = naturalBreakIndex;
+      // Break if we've reached the end
+      if (endIndex >= text.length) {
+        break;
       }
     }
     
@@ -281,7 +374,7 @@ class PDFService {
       const matchIndex = paragraphMatch.index + paragraphStart;
       // Ensure we're after the target index or reasonably close
       if (matchIndex > targetIndex - 50) {
-        return matchIndex;
+        return matchIndex + paragraphMatch[0].length;
       }
     }
     
@@ -296,7 +389,7 @@ class PDFService {
     const sentenceMatch = sentenceBreakSearch.match(/[.!?]\s/);
     
     if (sentenceMatch) {
-      return sentenceMatch.index + sentenceStart + 2; // +2 to include the space
+      return sentenceMatch.index + sentenceStart + 2; // +2 to include the punctuation and space
     }
     
     // Fallback: Look for the nearest space after the target index
@@ -311,7 +404,7 @@ class PDFService {
   }
   
   /**
-   * Process a PDF file to extract metadata, text, and chunks
+   * Process a PDF file to extract metadata, text, and chunks with page tracking
    * @param {File} file - The PDF file
    * @param {Object} options - Processing options
    * @returns {Promise<Object>} - Promise resolving to processing results
@@ -335,7 +428,7 @@ class PDFService {
       
       reportProgress('Extracting text from PDF...', 0);
       
-      // Extract text from the PDF
+      // Extract text from the PDF with page info
       const extractionResult = await this.extractText(
         file, 
         {
@@ -373,9 +466,9 @@ class PDFService {
       // Combine extracted text and OCR text
       const fullText = extractionResult.text + ' ' + ocrText;
       
-      // Create chunks
+      // Create chunks with page tracking
       reportProgress('Creating text chunks...', 0);
-      const chunks = this.chunkText(fullText, chunkSize, chunkOverlap);
+      const chunks = this.chunkTextWithPages(fullText, extractionResult.pages, chunkSize, chunkOverlap);
       reportProgress('Processing complete', 100);
       
       return {
@@ -388,7 +481,7 @@ class PDFService {
           isbn
         },
         text: fullText,
-        chunks,
+        chunks, // Now contains page numbers
         pages: extractionResult.pages
       };
     } catch (error) {
