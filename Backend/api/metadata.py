@@ -1,4 +1,7 @@
 # Backend/api/metadata.py
+"""
+Blueprint für Metadaten-API-Endpunkte
+"""
 import requests
 import time
 import logging
@@ -32,6 +35,36 @@ def respect_rate_limit():
     
     last_crossref_request = time.time()
 
+def fetch_metadata_from_crossref(doi):
+    """
+    Metadaten von CrossRef abrufen
+    
+    Args:
+        doi (str): Der Digital Object Identifier
+        
+    Returns:
+        dict: Metadaten oder None bei Fehler
+    """
+    if not doi:
+        return None
+    
+    try:
+        respect_rate_limit()
+        
+        url = f"{CROSSREF_API_BASE_URL}/{quote(doi, safe='')}"
+        headers = {
+            "User-Agent": f"SciLit2.0/1.0 ({CROSSREF_EMAIL})"
+        }
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            return response.json().get('message')
+            
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching CrossRef metadata: {e}")
+        return None
 
 @metadata_bp.route('/doi/<path:doi>', methods=['GET'])
 def get_doi_metadata(doi):
@@ -39,126 +72,61 @@ def get_doi_metadata(doi):
     try:
         # DOI validieren
         if not doi or not doi.startswith('10.'):
-            return jsonify({'error': 'Ungültige DOI. DOIs beginnen mit "10."'}), 400
+            return jsonify({'error': 'Invalid DOI. DOIs start with "10."'}), 400
         
-        # Rate-Limiting einhalten
-        respect_rate_limit()
-        
-        # URL-kodierte DOI für API-Aufruf
-        encoded_doi = quote(doi, safe='')
-        url = f"{CROSSREF_API_BASE_URL}/{encoded_doi}"
-        
-        # Anfrage mit User-Agent und E-Mail (gute Praxis bei CrossRef)
-        headers = {
-            'User-Agent': f'SciLit2.0/1.0 ({CROSSREF_EMAIL})',
-        }
-        
-        logger.info(f"CrossRef-Anfrage für DOI: {doi}")
-        response = requests.get(url, headers=headers)
-        
-        # Fehler überprüfen
-        if response.status_code == 404:
-            logger.warning(f"DOI nicht gefunden: {doi}")
-            return jsonify({'error': 'DOI nicht gefunden'}), 404
-        
-        response.raise_for_status()
-        crossref_data = response.json()
-        
+        # Metadaten abrufen
+        crossref_metadata = fetch_metadata_from_crossref(doi)
+        if not crossref_metadata:
+            return jsonify({"error": "DOI not found"}), 404
+            
         # Metadaten formatieren
-        if 'message' in crossref_data:
-            metadata = format_crossref_metadata(crossref_data['message'])
+        metadata = format_crossref_metadata(crossref_metadata)
+        
+        if metadata:
             return jsonify(metadata)
         else:
-            return jsonify({'error': 'Unerwartetes Antwortformat von CrossRef'}), 500
-    
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Fehler bei CrossRef-Anfrage: {str(e)}")
-        return jsonify({'error': f'CrossRef API-Fehler: {str(e)}'}), 500
-    
+            return jsonify({"error": "Failed to format metadata"}), 500
+            
     except Exception as e:
-        logger.error(f"Unerwarteter Fehler bei DOI-Metadatenabfrage: {str(e)}")
-        return jsonify({'error': f'Fehler bei Metadatenverarbeitung: {str(e)}'}), 500
-
+        logger.error(f"Error retrieving DOI metadata: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @metadata_bp.route('/isbn/<isbn>', methods=['GET'])
 def get_isbn_metadata(isbn):
-    """ISBN-Metadaten abrufen, zunächst von CrossRef, bei Misserfolg von OpenLibrary/Google Books"""
+    """ISBN-Metadaten abrufen"""
     try:
-        # ISBN normalisieren (Bindestriche und Leerzeichen entfernen)
-        isbn = isbn.replace('-', '').replace(' ', '')
+        # ISBN normalisieren
+        clean_isbn = isbn.replace('-', '').replace(' ', '')
         
-        if not isbn or len(isbn) not in [10, 13]:
-            return jsonify({'error': 'Ungültige ISBN. ISBN muss 10 oder 13 Zeichen haben.'}), 400
+        if not clean_isbn or len(clean_isbn) not in [10, 13]:
+            return jsonify({'error': 'Invalid ISBN. ISBN must be 10 or 13 digits.'}), 400
         
-        # 1. Versuch: CrossRef
-        crossref_result = search_isbn_crossref(isbn)
-        if crossref_result:
-            return jsonify(crossref_result)
-        
-        # 2. Versuch: OpenLibrary
-        openlibrary_result = search_isbn_openlibrary(isbn)
+        # 1. Versuch: OpenLibrary
+        openlibrary_result = search_isbn_openlibrary(clean_isbn)
         if openlibrary_result:
             return jsonify(openlibrary_result)
         
-        # 3. Versuch: Google Books
-        google_result = search_isbn_google_books(isbn)
+        # 2. Versuch: Google Books
+        google_result = search_isbn_google_books(clean_isbn)
         if google_result:
             return jsonify(google_result)
         
         # Keine Ergebnisse
-        return jsonify({'error': f'Keine Metadaten für ISBN {isbn} gefunden'}), 404
-    
-    except Exception as e:
-        logger.error(f"Unerwarteter Fehler bei ISBN-Metadatenabfrage: {str(e)}")
-        return jsonify({'error': f'Fehler bei Metadatenverarbeitung: {str(e)}'}), 500
-
-
-def search_isbn_crossref(isbn):
-    """ISBN in CrossRef suchen"""
-    try:
-        respect_rate_limit()
-        
-        # CrossRef-Suche nach ISBN
-        url = f"{CROSSREF_API_BASE_URL}?query={isbn}&filter=type:book&rows=1"
-        
-        headers = {
-            'User-Agent': f'SciLit2.0/1.0 ({CROSSREF_EMAIL})',
-        }
-        
-        logger.info(f"CrossRef-Suche nach ISBN: {isbn}")
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code != 200:
-            logger.warning(f"CrossRef ISBN-Suche fehlgeschlagen: {response.status_code}")
-            return None
-        
-        data = response.json()
-        
-        if 'message' in data and 'items' in data['message'] and len(data['message']['items']) > 0:
-            # Erstes Ergebnis nehmen
-            item = data['message']['items'][0]
+        return jsonify({'error': f'No metadata found for ISBN {isbn}'}), 404
             
-            # ISBN überprüfen
-            if 'ISBN' in item and isinstance(item['ISBN'], list) and isbn in [i.replace('-', '') for i in item['ISBN']]:
-                return format_crossref_metadata(item)
-        
-        return None
-    
     except Exception as e:
-        logger.error(f"Fehler bei CrossRef ISBN-Suche: {str(e)}")
-        return None
-
+        logger.error(f"Error retrieving ISBN metadata: {e}")
+        return jsonify({"error": str(e)}), 500
 
 def search_isbn_openlibrary(isbn):
     """ISBN in Open Library suchen"""
     try:
         url = f"{OPENLIBRARY_API_BASE_URL}/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
         
-        logger.info(f"OpenLibrary-Suche nach ISBN: {isbn}")
+        logger.info(f"OpenLibrary search for ISBN: {isbn}")
         response = requests.get(url)
         
         if response.status_code != 200:
-            logger.warning(f"OpenLibrary ISBN-Suche fehlgeschlagen: {response.status_code}")
             return None
         
         data = response.json()
@@ -182,21 +150,18 @@ def search_isbn_openlibrary(isbn):
             
             # Verlag und Jahr extrahieren
             publisher = ''
-            publication_date = ''
+            publicationDate = ''
             if 'publishers' in book_data and len(book_data['publishers']) > 0:
                 publisher = book_data['publishers'][0].get('name', '')
             
             if 'publish_date' in book_data:
-                publication_date = book_data['publish_date']
-                # Wenn nur Jahr vorhanden, ISO-Format verwenden
-                if len(publication_date) == 4 and publication_date.isdigit():
-                    publication_date = f"{publication_date}-01-01"
+                publicationDate = book_data['publish_date']
             
             return {
                 'title': book_data.get('title', ''),
                 'authors': authors,
                 'publisher': publisher,
-                'publicationDate': publication_date,
+                'publicationDate': publicationDate,
                 'isbn': isbn,
                 'type': 'book',
                 'subtitle': book_data.get('subtitle', ''),
@@ -206,20 +171,18 @@ def search_isbn_openlibrary(isbn):
         return None
     
     except Exception as e:
-        logger.error(f"Fehler bei OpenLibrary ISBN-Suche: {str(e)}")
+        logger.error(f"Error in OpenLibrary ISBN search: {e}")
         return None
-
 
 def search_isbn_google_books(isbn):
     """ISBN in Google Books suchen"""
     try:
         url = f"{GOOGLE_BOOKS_API_BASE_URL}?q=isbn:{isbn}"
         
-        logger.info(f"Google Books-Suche nach ISBN: {isbn}")
+        logger.info(f"Google Books search for ISBN: {isbn}")
         response = requests.get(url)
         
         if response.status_code != 200:
-            logger.warning(f"Google Books ISBN-Suche fehlgeschlagen: {response.status_code}")
             return None
         
         data = response.json()
@@ -239,17 +202,11 @@ def search_isbn_google_books(isbn):
                     else:
                         authors.append({'name': author_name})
             
-            # Erscheinungsdatum extrahieren
-            publication_date = book.get('publishedDate', '')
-            # Wenn nur Jahr vorhanden, ISO-Format verwenden
-            if len(publication_date) == 4 and publication_date.isdigit():
-                publication_date = f"{publication_date}-01-01"
-            
             return {
                 'title': book.get('title', ''),
                 'authors': authors,
                 'publisher': book.get('publisher', ''),
-                'publicationDate': publication_date,
+                'publicationDate': book.get('publishedDate', ''),
                 'isbn': isbn,
                 'type': 'book',
                 'subtitle': book.get('subtitle', ''),
@@ -259,9 +216,8 @@ def search_isbn_google_books(isbn):
         return None
     
     except Exception as e:
-        logger.error(f"Fehler bei Google Books ISBN-Suche: {str(e)}")
+        logger.error(f"Error in Google Books ISBN search: {e}")
         return None
-
 
 def format_crossref_metadata(metadata):
     """CrossRef-Metadaten in einheitliches Format umwandeln"""
@@ -270,116 +226,85 @@ def format_crossref_metadata(metadata):
     
     try:
         # Grundlegende Informationen extrahieren
-        result = {
-            'title': metadata['title'][0] if 'title' in metadata and metadata['title'] else '',
-            'doi': metadata.get('DOI', ''),
-            'url': metadata.get('URL', ''),
-            'type': determine_document_type(metadata),
-            'publicationDate': '',
-            'authors': [],
-            'journal': metadata['container-title'][0] if 'container-title' in metadata and metadata['container-title'] else '',
-            'volume': metadata.get('volume', ''),
-            'issue': metadata.get('issue', ''),
-            'pages': metadata.get('page', ''),
-            'publisher': metadata.get('publisher', ''),
-            'abstract': metadata.get('abstract', ''),
-            'isbn': '',
-            'issn': '',
-            'subtitle': '', 
-            'edition': '',
-            'publisherLocation': '',
-            'series': '',
-            'seriesNumber': '',
-        }
+        title = ""
+        if 'title' in metadata:
+            if isinstance(metadata['title'], list) and metadata['title']:
+                title = metadata['title'][0]
+            else:
+                title = metadata['title']
         
-        # Autoren extrahieren
-        if 'author' in metadata and isinstance(metadata['author'], list):
-            for author in metadata['author']:
-                author_info = {
-                    'given': author.get('given', ''),
-                    'family': author.get('family', ''),
-                    'name': '',
-                    'orcid': author.get('ORCID', '')
-                }
-                
-                # Vollständigen Namen im Format "Nachname, Vorname" generieren
-                if author.get('family') and author.get('given'):
-                    author_info['name'] = f"{author['family']}, {author['given']}"
-                elif author.get('name'):
-                    author_info['name'] = author['name']
-                else:
-                    name_parts = []
-                    if author.get('family'):
-                        name_parts.append(author['family'])
-                    if author.get('given'):
-                        name_parts.append(author['given'])
-                    author_info['name'] = ", ".join(name_parts)
-                
-                result['authors'].append(author_info)
+        # Dokumenttyp ermitteln
+        document_type = 'other'
+        crossref_type = metadata.get('type', '').lower()
+        
+        if 'journal-article' in crossref_type:
+            document_type = 'article'
+        elif 'proceedings' in crossref_type:
+            document_type = 'conference'
+        elif any(book_type in crossref_type for book_type in ['book', 'monograph']):
+            document_type = 'book'
+        elif 'dissertation' in crossref_type:
+            document_type = 'thesis'
         
         # Publikationsdatum extrahieren
+        publication_date = ''
         if 'published' in metadata:
             date_parts = metadata['published'].get('date-parts', [[]])[0]
             if date_parts:
-                # Format als YYYY-MM-DD oder Teildatum
-                result['publicationDate'] = '-'.join(str(part) for part in date_parts)
-                
-                # Wenn nur das Jahr angegeben ist, ein vollständiges Datum erstellen
-                if len(date_parts) == 1:
-                    result['publicationDate'] = f"{date_parts[0]}-01-01"
+                # Format als YYYY-MM-DD oder nur Jahr
+                if len(date_parts) >= 3:
+                    publication_date = f"{date_parts[0]}-{date_parts[1]:02d}-{date_parts[2]:02d}"
+                elif len(date_parts) == 2:
+                    publication_date = f"{date_parts[0]}-{date_parts[1]:02d}-01"
+                elif len(date_parts) == 1:
+                    publication_date = f"{date_parts[0]}-01-01"
+        
+        # Journal/Container-Titel extrahieren
+        journal = ""
+        if 'container-title' in metadata:
+            if isinstance(metadata['container-title'], list) and metadata['container-title']:
+                journal = metadata['container-title'][0]
+            else:
+                journal = metadata['container-title']
         
         # ISBN für Bücher extrahieren
-        if 'ISBN' in metadata and isinstance(metadata['ISBN'], list) and metadata['ISBN']:
-            result['isbn'] = metadata['ISBN'][0]
+        isbn = ""
+        if 'ISBN' in metadata:
+            if isinstance(metadata['ISBN'], list) and metadata['ISBN']:
+                isbn = metadata['ISBN'][0].replace('-', '')
+            else:
+                isbn = metadata['ISBN'].replace('-', '')
         
-        # ISSN für Zeitschriften extrahieren
-        if 'ISSN' in metadata and isinstance(metadata['ISSN'], list) and metadata['ISSN']:
-            result['issn'] = metadata['ISSN'][0]
-        
-        # Sonstige Felder
-        if 'subtitle' in metadata and metadata['subtitle']:
-            result['subtitle'] = metadata['subtitle'][0]
+        result = {
+            'title': title,
+            'authors': metadata.get('author', []),
+            'type': document_type,
+            'publicationDate': publication_date,
+            'publisher': metadata.get('publisher', ''),
+            'journal': journal,
+            'volume': metadata.get('volume', ''),
+            'issue': metadata.get('issue', ''),
+            'pages': metadata.get('page', ''),
+            'doi': metadata.get('DOI', ''),
+            'isbn': isbn,
+            'abstract': metadata.get('abstract', '')
+        }
         
         return result
-    
+        
     except Exception as e:
-        logger.error(f"Fehler beim Formatieren der CrossRef-Metadaten: {str(e)}")
+        logger.error(f"Error formatting CrossRef metadata: {e}")
         return None
-
-
-def determine_document_type(metadata):
-    """Dokumenttyp basierend auf CrossRef-Metadaten bestimmen"""
-    if not metadata:
-        return 'other'
-    
-    crossref_type = metadata.get('type', '').lower()
-    
-    # Mapping von CrossRef-Typen zu unseren Dokumenttypen
-    type_mapping = {
-        'journal-article': 'article',
-        'proceedings-article': 'conference',
-        'book': 'book',
-        'book-chapter': 'book',
-        'edited-book': 'edited_book',
-        'monograph': 'book',
-        'reference-book': 'book',
-        'dissertation': 'thesis',
-        'report': 'report',
-        'journal': 'article',
-        'journal-issue': 'article',
-        'journal-volume': 'article'
-    }
-    
-    return type_mapping.get(crossref_type, 'other')
-
 
 @metadata_bp.route('/search', methods=['GET'])
 def search_metadata():
-    """Suche nach Metadaten mit Freitextsuche"""
+    """
+    Suche nach Metadaten mit Freitextsuche
+    """
     query = request.args.get('q', '')
     
     if not query or len(query) < 3:
-        return jsonify({'error': 'Suchbegriff muss mindestens 3 Zeichen haben'}), 400
+        return jsonify({'error': 'Search query must be at least 3 characters'}), 400
     
     try:
         respect_rate_limit()
@@ -391,11 +316,11 @@ def search_metadata():
             'User-Agent': f'SciLit2.0/1.0 ({CROSSREF_EMAIL})',
         }
         
-        logger.info(f"CrossRef-Suche nach: {query}")
+        logger.info(f"CrossRef search for: {query}")
         response = requests.get(url, headers=headers)
         
         if response.status_code != 200:
-            return jsonify({'error': 'Fehler bei CrossRef-Suche'}), 500
+            return jsonify({'error': 'Error searching CrossRef'}), 500
         
         data = response.json()
         
@@ -409,5 +334,18 @@ def search_metadata():
         return jsonify({'results': results, 'count': len(results)})
     
     except Exception as e:
-        logger.error(f"Fehler bei Metadaten-Suche: {str(e)}")
-        return jsonify({'error': f'Fehler bei Suche: {str(e)}'}), 500
+        logger.error(f"Error in metadata search: {e}")
+        return jsonify({'error': f'Search error: {str(e)}'}), 500
+
+@metadata_bp.route('/citation-styles', methods=['GET'])
+def get_citation_styles():
+    """
+    Verfügbare Zitationsstile abrufen
+    """
+    styles = [
+        {"id": "apa", "name": "APA 7th Edition"},
+        {"id": "chicago", "name": "Chicago 18th Edition"},
+        {"id": "harvard", "name": "Harvard"}
+    ]
+    
+    return jsonify(styles)

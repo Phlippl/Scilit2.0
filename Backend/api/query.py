@@ -1,8 +1,10 @@
 # Backend/api/query.py
+"""
+Blueprint für Query-API-Endpunkte
+"""
 import os
 import json
 import logging
-import re
 import uuid
 from datetime import datetime
 from flask import Blueprint, jsonify, request, current_app
@@ -87,58 +89,10 @@ def query_documents_api():
             metadata = result.get('metadata', {})
             document_id = metadata.get('document_id')
             
-            # Citation für dieses Ergebnis erstellen
-            authors = []
-            if metadata.get('authors'):
-                try:
-                    authors = json.loads(metadata.get('authors', '[]'))
-                except:
-                    # Fallback bei ungültigem JSON
-                    authors = []
-            
-            # Autor(en) für Kurzzitat formatieren
-            author_text = ""
-            if authors:
-                if len(authors) == 1:
-                    author_name = authors[0].get('name', '')
-                    if ',' in author_name:
-                        author_text = author_name.split(',')[0].strip()
-                    else:
-                        parts = author_name.split()
-                        author_text = parts[-1] if parts else author_name
-                else:
-                    # Bei mehreren Autoren: Erster Autor et al.
-                    first_author = authors[0].get('name', '')
-                    if ',' in first_author:
-                        author_text = first_author.split(',')[0].strip()
-                    else:
-                        parts = first_author.split()
-                        author_text = parts[-1] if parts else first_author
-                    
-                    author_text += " et al."
-            
-            # Jahr aus Publikationsdatum extrahieren
-            year = ""
-            if metadata.get('publication_date'):
-                year_match = re.search(r'(\d{4})', metadata.get('publication_date', ''))
-                if year_match:
-                    year = year_match.group(1)
-            
-            # Zitat mit Seitenzahl zusammenbauen
-            citation = f"({author_text}"
-            if year:
-                citation += f", {year}"
-            
-            # Seitenzahl hinzufügen, falls vorhanden und gewünscht
-            if include_page_numbers and metadata.get('page'):
-                citation += f", S. {metadata.get('page')}"
-            
-            citation += ")"
-            
-            # Ergebnis mit Zitat speichern
+            # Zitat für dieses Ergebnis erstellen
             formatted_results.append({
                 "text": result.get('text', ''),
-                "source": citation,
+                "source": result.get('source', ''),
                 "metadata": metadata,
                 "document_id": document_id
             })

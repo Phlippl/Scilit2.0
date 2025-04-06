@@ -1,312 +1,274 @@
 # Backend/api/documents.py
+"""
+Blueprint for document management API endpoints
+"""
 import os
 import json
 import logging
 import uuid
-import tempfile
 from datetime import datetime
 from flask import Blueprint, jsonify, request, current_app
 from werkzeug.utils import secure_filename
+from pathlib import Path
 
 # Eigene Services importieren
 from services.pdf_processor import PDFProcessor
-from services.vector_db import store_document_chunks, delete_document
+from services.vector_db import store_document_chunks, delete_document, get_or_create_collection
+from utils.helpers import allowed_file, extract_doi, extract_isbn, get_safe_filepath
 
-# Metadaten-API für DOI/ISBN-Abfragen
-from api.metadata import get_doi_metadata, get_isbn_metadata, format_crossref_metadata
+# Metadata-API für DOI/ISBN-Abfragen importieren
+from api.metadata import fetch_metadata_from_crossref
 
 logger = logging.getLogger(__name__)
 
 # Blueprint für Dokument-API erstellen
 documents_bp = Blueprint('documents', __name__, url_prefix='/api/documents')
 
-# Konfiguration
-UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', './uploads')
-ALLOWED_EXTENSIONS = {'pdf'}
-MAX_CONTENT_LENGTH = int(os.environ.get('MAX_CONTENT_LENGTH', 20 * 1024 * 1024))  # 20 MB Standardgröße
-
-# Upload-Verzeichnis erstellen, falls nicht vorhanden
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-
-def allowed_file(filename):
-    """Prüft, ob die Datei eine zulässige Erweiterung hat"""
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
 @documents_bp.route('', methods=['GET'])
-def get_documents():
-    """
-    Alle Dokumente des aktuellen Benutzers abrufen
-    """
+def list_documents():
+    """Liste aller Dokumente abrufen"""
     try:
         # TODO: Benutzerauthentifizierung
-        # In einer echten Implementierung würde hier der Benutzer aus dem JWT-Token extrahiert
-        # Für dieses Beispiel verwenden wir einen Dummy-Benutzer
         user_id = request.headers.get('X-User-ID', 'default_user')
         
-        # TODO: Aus Datenbank laden
-        # Hier würden die Dokumente normalerweise aus einer Datenbank geladen
-        # Für dieses Beispiel erstellen wir eine Dummy-Liste
+        documents = []
         
-        # Dummy-Dokumente für Testzwecke
-        documents = [
-            {
-                "id": "doc1",
-                "title": "Climate Change Effects on Agricultural Systems",
-                "authors": [
-                    {"name": "Smith, John", "orcid": "0000-0001-2345-6789"},
-                    {"name": "Johnson, Maria", "orcid": "0000-0002-3456-7890"}
-                ],
-                "type": "article",
-                "publicationDate": "2023-04-15",
-                "journal": "Journal of Environmental Science",
-                "doi": "10.1234/jes.2023.01.001", 
-                "publisher": "Academic Press",
-                "uploadDate": "2024-04-01T12:30:45Z",
-                "abstract": "This paper examines the impact of climate change on agricultural systems worldwide..."
-            },
-            {
-                "id": "doc2",
-                "title": "Machine Learning Applications in Medicine",
-                "authors": [
-                    {"name": "Brown, Robert", "orcid": "0000-0003-4567-8901"},
-                    {"name": "Davis, Sarah", "orcid": "0000-0004-5678-9012"}
-                ],
-                "type": "article",
-                "publicationDate": "2023-08-22",
-                "journal": "Medical Informatics Journal",
-                "doi": "10.5678/mij.2023.02.005",
-                "publisher": "Medical Science Publications",
-                "uploadDate": "2024-04-02T09:15:30Z",
-                "abstract": "This review explores the current and future applications of machine learning in clinical settings..."
-            }
-        ]
+        # Alle JSON-Metadatendateien durchsuchen
+        upload_folder = Path(current_app.config['UPLOAD_FOLDER'])
+        metadata_files = list(upload_folder.glob("*.json"))
         
-        return jsonify(documents)
-    
+        for file in metadata_files:
+            with open(file, 'r') as f:
+                metadata = json.load(f)
+                documents.append(metadata)
+        
+        # Nach Uploaddatum sortieren, neueste zuerst
+        return jsonify(sorted(documents, key=lambda x: x.get('upload_date', ''), reverse=True))
+        
     except Exception as e:
-        logger.error(f"Error retrieving documents: {e}")
-        return jsonify({"error": "Failed to retrieve documents"}), 500
-
+        logger.error(f"Error listing documents: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @documents_bp.route('/<document_id>', methods=['GET'])
 def get_document(document_id):
-    """
-    Einzelnes Dokument anhand der ID abrufen
-    """
+    """Spezifisches Dokument anhand seiner ID abrufen"""
     try:
         # TODO: Benutzerauthentifizierung
         user_id = request.headers.get('X-User-ID', 'default_user')
         
-        # TODO: Aus Datenbank laden
-        # Hier würde das Dokument normalerweise aus einer Datenbank geladen
+        # Metadatendatei finden
+        upload_folder = Path(current_app.config['UPLOAD_FOLDER'])
+        metadata_files = list(upload_folder.glob(f"{document_id}_*.json"))
         
-        # Dummy-Dokument für Testzwecke
-        if document_id == "doc1":
-            document = {
-                "id": "doc1",
-                "title": "Climate Change Effects on Agricultural Systems",
-                "authors": [
-                    {"name": "Smith, John", "orcid": "0000-0001-2345-6789"},
-                    {"name": "Johnson, Maria", "orcid": "0000-0002-3456-7890"}
-                ],
-                "type": "article",
-                "publicationDate": "2023-04-15",
-                "journal": "Journal of Environmental Science",
-                "doi": "10.1234/jes.2023.01.001",
-                "publisher": "Academic Press",
-                "uploadDate": "2024-04-01T12:30:45Z",
-                "abstract": "This paper examines the impact of climate change on agricultural systems worldwide..."
-            }
-            return jsonify(document)
-        else:
+        if not metadata_files:
             return jsonify({"error": "Document not found"}), 404
-    
+            
+        with open(metadata_files[0], 'r') as f:
+            metadata = json.load(f)
+            
+        return jsonify(metadata)
+        
     except Exception as e:
         logger.error(f"Error retrieving document {document_id}: {e}")
-        return jsonify({"error": f"Failed to retrieve document {document_id}"}), 500
-
+        return jsonify({"error": str(e)}), 500
 
 @documents_bp.route('', methods=['POST'])
 def save_document():
-    """
-    Neues Dokument speichern (PDF hochladen und verarbeiten)
-    """
+    """Neues Dokument hochladen und verarbeiten"""
     try:
-        # Prüfen, ob Anfrage eine Datei oder JSON enthält
-        has_file = 'file' in request.files
-        has_data = 'data' in request.form or request.is_json
+        if 'file' not in request.files and not request.form.get('data'):
+            return jsonify({"error": "No file or data provided"}), 400
+            
+        # Metadaten aus dem Formular extrahieren
+        metadata = {}
+        if 'data' in request.form:
+            try:
+                metadata = json.loads(request.form.get('data', '{}'))
+            except json.JSONDecodeError:
+                return jsonify({"error": "Invalid JSON data"}), 400
         
-        if not (has_file or has_data):
-            return jsonify({"error": "No file or document data provided"}), 400
+        # Dokument-ID generieren, falls nicht vorhanden
+        document_id = metadata.get('id', str(uuid.uuid4()))
         
         # TODO: Benutzerauthentifizierung
         user_id = request.headers.get('X-User-ID', 'default_user')
         
-        # Metadaten extrahieren (entweder aus Form-Daten oder JSON-Body)
-        if has_data:
-            if 'data' in request.form:
-                document_data = json.loads(request.form['data'])
-            elif request.is_json:
-                document_data = request.get_json()
-        else:
-            document_data = {}
-        
-        # PDF-Datei verarbeiten
-        pdf_file = None
-        file_path = None
-        extracted_text = None
-        chunks = []
-        pdf_metadata = {}
-        
-        if has_file:
+        # PDF-Datei verarbeiten, falls vorhanden
+        if 'file' in request.files:
             file = request.files['file']
-            
-            # Dateiname validieren
             if file.filename == '':
                 return jsonify({"error": "No file selected"}), 400
-            
+                
             if not allowed_file(file.filename):
                 return jsonify({"error": "File type not allowed. Only PDF files are accepted."}), 400
             
             # Datei sicher speichern
             filename = secure_filename(file.filename)
-            file_path = os.path.join(UPLOAD_FOLDER, f"{uuid.uuid4()}_{filename}")
-            file.save(file_path)
+            filepath = get_safe_filepath(document_id, filename)
+            file.save(filepath)
             
-            # Verarbeitungseinstellungen
-            processing_settings = {
-                'maxPages': int(document_data.get('maxPages', 0)),
-                'performOCR': bool(document_data.get('performOCR', False)),
-                'chunkSize': int(document_data.get('chunkSize', 1000)),
-                'chunkOverlap': int(document_data.get('chunkOverlap', 200))
-            }
-            
-            # Verbesserte PDF-Verarbeitung mit Seitenverfolgung
-            processing_result = PDFProcessor.process_file(file_path, processing_settings)
-            
-            # Extrahierte Daten speichern
-            extracted_text = processing_result['text']
-            chunks = processing_result['chunks']  # Enthält jetzt Chunks mit Seitenzahlen
-            
-            # Metadaten aus dem PDF extrahieren
-            pdf_metadata = processing_result['metadata']
-            
-            # Metadaten über DOI oder ISBN abrufen, falls nicht bereits angegeben
-            metadata = document_data.get('metadata', {})
-            
-            if not metadata.get('title') and (pdf_metadata.get('doi') or pdf_metadata.get('isbn')):
-                fetched_metadata = None
-                
-                # Zuerst DOI versuchen
-                if pdf_metadata.get('doi'):
-                    try:
-                        response = get_doi_metadata(pdf_metadata['doi'])
-                        if hasattr(response, 'status_code') and response.status_code == 200:
-                            fetched_metadata = response.get_json()
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch metadata for DOI {pdf_metadata['doi']}: {e}")
-                
-                # Falls keine DOI-Metadaten, ISBN versuchen
-                if not fetched_metadata and pdf_metadata.get('isbn'):
-                    try:
-                        response = get_isbn_metadata(pdf_metadata['isbn'])
-                        if hasattr(response, 'status_code') and response.status_code == 200:
-                            fetched_metadata = response.get_json()
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch metadata for ISBN {pdf_metadata['isbn']}: {e}")
-                
-                # Gefundene Metadaten verwenden
-                if fetched_metadata:
-                    metadata = fetched_metadata
-            
-            # Metadaten mit PDF-Metadaten ergänzen
-            metadata.update(pdf_metadata)
-            document_data['metadata'] = metadata
-        
-        # Dokument-ID generieren
-        document_id = str(uuid.uuid4())
-        
-        # Speicherzeit setzen
-        upload_date = datetime.utcnow().isoformat() + 'Z'
-        
-        # Dokument-Objekt erstellen
-        document = {
-            "id": document_id,
-            "user_id": user_id,
-            "title": document_data.get('metadata', {}).get('title', "Untitled Document"),
-            "authors": document_data.get('metadata', {}).get('authors', []),
-            "type": document_data.get('metadata', {}).get('type', 'other'),
-            "publicationDate": document_data.get('metadata', {}).get('publicationDate', ''),
-            "journal": document_data.get('metadata', {}).get('journal', ''),
-            "volume": document_data.get('metadata', {}).get('volume', ''),
-            "issue": document_data.get('metadata', {}).get('issue', ''),
-            "pages": document_data.get('metadata', {}).get('pages', ''),
-            "publisher": document_data.get('metadata', {}).get('publisher', ''),
-            "doi": document_data.get('metadata', {}).get('doi', ''),
-            "isbn": document_data.get('metadata', {}).get('isbn', ''),
-            "abstract": document_data.get('metadata', {}).get('abstract', ''),
-            "uploadDate": upload_date,
-            "fileName": os.path.basename(file_path) if file_path else '',
-            "fileSize": os.path.getsize(file_path) if file_path else 0,
-            "processingSettings": {
-                "maxPages": document_data.get('maxPages', 0),
-                "performOCR": document_data.get('performOCR', False),
-                "chunkSize": document_data.get('chunkSize', 1000),
-                "chunkOverlap": document_data.get('chunkOverlap', 200)
-            }
-        }
-        
-        # In Vektordatenbank speichern
-        if chunks and len(chunks) > 0:
-            store_success = store_document_chunks(
-                document_id=document_id,
-                chunks=chunks,  # Enthält jetzt Seitenzahlen
-                metadata={
-                    "user_id": user_id,
-                    "title": document["title"],
-                    "authors": document["authors"],
-                    "type": document["type"],
-                    "publicationDate": document["publicationDate"],
-                    "journal": document["journal"],
-                    "publisher": document["publisher"],
-                    "doi": document["doi"],
-                    "isbn": document["isbn"],
-                    "volume": document["volume"],
-                    "issue": document["issue"],
-                    "pages": document["pages"]
+            try:
+                # PDF-Verarbeitung mit den benutzerdefinierten Einstellungen
+                processing_settings = {
+                    'maxPages': int(metadata.get('maxPages', 0)),
+                    'performOCR': bool(metadata.get('performOCR', False)),
+                    'chunkSize': int(metadata.get('chunkSize', 1000)),
+                    'chunkOverlap': int(metadata.get('chunkOverlap', 200))
                 }
-            )
-            
-            if not store_success:
-                logger.warning(f"Failed to store chunks for document {document_id} in vector database")
-                # Trotzdem fortfahren, damit der Benutzer die Metadaten hat
-        
-        # TODO: In relationaler Datenbank speichern (SQLite oder MySQL)
-        # In einer echten Implementierung würde das Dokument hier in einer Datenbank gespeichert
-        
-        # Aufräumen: Temporäre Datei löschen (optional)
-        # In einer realen Implementierung würdest du die Datei behalten oder in einen persistenten Speicher verschieben
-        # if file_path and os.path.exists(file_path):
-        #     os.unlink(file_path)
-        
-        return jsonify(document)
+                
+                # PDF verarbeiten
+                pdf_processor = PDFProcessor()
+                result = pdf_processor.process_file(filepath, processing_settings)
+                
+                # Extrahierte Daten den Metadaten hinzufügen
+                if 'doi' not in metadata or not metadata['doi']:
+                    metadata['doi'] = result['metadata'].get('doi')
+                
+                if 'isbn' not in metadata or not metadata['isbn']:
+                    metadata['isbn'] = result['metadata'].get('isbn')
+                    
+                # Metadaten über DOI oder ISBN abrufen, falls nicht bereits angegeben
+                if not metadata.get('title') and (metadata.get('doi') or metadata.get('isbn')):
+                    # Zuerst DOI versuchen
+                    if metadata.get('doi'):
+                        crossref_metadata = fetch_metadata_from_crossref(metadata['doi'])
+                        if crossref_metadata:
+                            # Crossref-Metadaten formatieren und hinzufügen
+                            metadata.update({
+                                "title": crossref_metadata.get("title", [""]) if isinstance(crossref_metadata.get("title"), list) else crossref_metadata.get("title", ""),
+                                "authors": crossref_metadata.get("author", []),
+                                "publicationDate": crossref_metadata.get("published", {}).get("date-parts", [[""]])[0][0],
+                                "journal": crossref_metadata.get("container-title", [""]) if isinstance(crossref_metadata.get("container-title"), list) else "",
+                                "publisher": crossref_metadata.get("publisher", ""),
+                                "volume": crossref_metadata.get("volume", ""),
+                                "issue": crossref_metadata.get("issue", ""),
+                                "pages": crossref_metadata.get("page", ""),
+                                "type": crossref_metadata.get("type", ""),
+                            })
+                    
+                    # TODO: ISBN-Metadaten abrufen, wenn DOI nicht erfolgreich war
+                    
+                # Chunks in Vektordatenbank speichern
+                if result['chunks'] and len(result['chunks']) > 0:
+                    # User-ID zu Metadaten hinzufügen
+                    metadata['user_id'] = user_id
+                    
+                    # Chunks in der Vektordatenbank speichern
+                    store_document_chunks(
+                        document_id=document_id,
+                        chunks=result['chunks'],
+                        metadata={
+                            "user_id": user_id,
+                            "document_id": document_id,
+                            "title": metadata.get('title', ''),
+                            "authors": metadata.get('authors', []),
+                            "type": metadata.get('type', 'other'),
+                            "publicationDate": metadata.get('publicationDate', ''),
+                            "journal": metadata.get('journal', ''),
+                            "publisher": metadata.get('publisher', ''),
+                            "doi": metadata.get('doi', ''),
+                            "isbn": metadata.get('isbn', ''),
+                            "volume": metadata.get('volume', ''),
+                            "issue": metadata.get('issue', ''),
+                            "pages": metadata.get('pages', '')
+                        }
+                    )
+                    
+                    # Metadaten mit Chunk-Info aktualisieren
+                    metadata['processed'] = True
+                    metadata['num_chunks'] = len(result['chunks'])
+                    metadata['chunk_size'] = processing_settings['chunkSize']
+                    metadata['chunk_overlap'] = processing_settings['chunkOverlap']
+                
+                # Upload-Metadaten hinzufügen
+                metadata['document_id'] = document_id
+                metadata['filename'] = filename
+                metadata['fileSize'] = os.path.getsize(filepath)
+                metadata['uploadDate'] = datetime.utcnow().isoformat() + 'Z'
+                metadata['filePath'] = filepath
+                
+                # Metadaten als JSON-Datei neben der PDF speichern
+                metadata_path = f"{filepath}.json"
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+                
+                return jsonify(metadata)
+                
+            except Exception as e:
+                # Aufräumen bei Fehler
+                if os.path.exists(filepath):
+                    os.unlink(filepath)
+                logger.error(f"Error processing document: {e}")
+                return jsonify({"error": f"Failed to process document: {str(e)}"}), 500
+                
+        # Wenn nur Metadaten aktualisiert werden sollen (ohne Datei)
+        else:
+            try:
+                # Dokument finden
+                upload_folder = Path(current_app.config['UPLOAD_FOLDER'])
+                files = list(upload_folder.glob(f"{document_id}_*"))
+                if not files:
+                    return jsonify({"error": "Document not found"}), 404
+                    
+                # PDF-Datei finden
+                pdf_files = [f for f in files if f.suffix.lower() == '.pdf']
+                if not pdf_files:
+                    return jsonify({"error": "PDF file not found"}), 404
+                
+                filepath = str(pdf_files[0])
+                
+                # Metadaten aktualisieren
+                metadata['document_id'] = document_id
+                metadata['updateDate'] = datetime.utcnow().isoformat() + 'Z'
+                
+                # Metadaten als JSON-Datei speichern
+                metadata_path = f"{filepath}.json"
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+                
+                return jsonify(metadata)
+                
+            except Exception as e:
+                logger.error(f"Error updating document metadata: {e}")
+                return jsonify({"error": f"Failed to update document: {str(e)}"}), 500
     
     except Exception as e:
-        logger.error(f"Error saving document: {e}")
-        # Aufräumen bei Fehler
-        if 'file_path' in locals() and file_path and os.path.exists(file_path):
-            os.unlink(file_path)
+        logger.error(f"Error in save_document: {e}")
         return jsonify({"error": f"Failed to save document: {str(e)}"}), 500
 
+@documents_bp.route('/<document_id>', methods=['DELETE'])
+def delete_document_api(document_id):
+    """Dokument löschen"""
+    try:
+        # TODO: Benutzerauthentifizierung
+        user_id = request.headers.get('X-User-ID', 'default_user')
+        
+        # Alle Dateien für dieses Dokument suchen
+        upload_folder = Path(current_app.config['UPLOAD_FOLDER'])
+        files = list(upload_folder.glob(f"{document_id}_*"))
+        
+        if not files:
+            return jsonify({"error": "Document not found"}), 404
+        
+        # PDF und Metadatendateien löschen
+        for file in files:
+            try:
+                file.unlink()
+            except Exception as e:
+                logger.error(f"Error deleting file {file}: {e}")
+        
+        # Aus Vektordatenbank löschen
+        delete_document(document_id, user_id)
+        
+        return jsonify({"success": True, "message": f"Document {document_id} deleted successfully"})
+        
+    except Exception as e:
+        logger.error(f"Error deleting document {document_id}: {e}")
+        return jsonify({"error": f"Failed to delete document: {str(e)}"}), 500
 
 @documents_bp.route('/<document_id>', methods=['PUT'])
 def update_document(document_id):
-    """
-    Dokument aktualisieren
-    """
+    """Dokument aktualisieren"""
     try:
         # TODO: Benutzerauthentifizierung
         user_id = request.headers.get('X-User-ID', 'default_user')
@@ -314,52 +276,41 @@ def update_document(document_id):
         if not request.is_json:
             return jsonify({"error": "Request must be JSON"}), 400
         
-        document_data = request.get_json()
+        metadata = request.get_json()
         
-        # TODO: In Datenbank aktualisieren
-        # In einer echten Implementierung würde das Dokument hier in der Datenbank aktualisiert
+        # Dokument finden
+        upload_folder = Path(current_app.config['UPLOAD_FOLDER'])
+        files = list(upload_folder.glob(f"{document_id}_*"))
         
-        # Dummy-Antwort für dieses Beispiel
-        document = {
-            "id": document_id,
-            "title": document_data.get('title', "Untitled Document"),
-            "authors": document_data.get('authors', []),
-            "type": document_data.get('type', 'other'),
-            "publicationDate": document_data.get('publicationDate', ''),
-            "journal": document_data.get('journal', ''),
-            "publisher": document_data.get('publisher', ''),
-            "doi": document_data.get('doi', ''),
-            "isbn": document_data.get('isbn', ''),
-            "abstract": document_data.get('abstract', ''),
-            "updatedAt": datetime.utcnow().isoformat() + 'Z'
-        }
+        if not files:
+            return jsonify({"error": "Document not found"}), 404
+            
+        # PDF-Datei finden
+        pdf_files = [f for f in files if f.suffix.lower() == '.pdf']
+        if not pdf_files:
+            return jsonify({"error": "PDF file not found"}), 404
         
-        return jsonify(document)
-    
+        filepath = str(pdf_files[0])
+        
+        # Bestehende Metadaten laden und aktualisieren
+        metadata_path = f"{filepath}.json"
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                existing_metadata = json.load(f)
+            # Metadaten aktualisieren, bestehende Werte beibehalten
+            existing_metadata.update(metadata)
+            metadata = existing_metadata
+        
+        # Update-Datum hinzufügen
+        metadata['document_id'] = document_id
+        metadata['updateDate'] = datetime.utcnow().isoformat() + 'Z'
+        
+        # Metadaten speichern
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        return jsonify(metadata)
+        
     except Exception as e:
         logger.error(f"Error updating document {document_id}: {e}")
-        return jsonify({"error": f"Failed to update document {document_id}"}), 500
-
-
-@documents_bp.route('/<document_id>', methods=['DELETE'])
-def delete_document_api(document_id):
-    """
-    Dokument löschen
-    """
-    try:
-        # TODO: Benutzerauthentifizierung
-        user_id = request.headers.get('X-User-ID', 'default_user')
-        
-        # Dokument aus Vektordatenbank löschen
-        vector_db_delete = delete_document(document_id, user_id)
-        
-        # TODO: Aus Datenbank löschen
-        # In einer echten Implementierung würde das Dokument hier aus der Datenbank gelöscht
-        
-        # TODO: PDF-Datei löschen, falls vorhanden
-        
-        return jsonify({"success": True, "message": f"Document {document_id} deleted"})
-    
-    except Exception as e:
-        logger.error(f"Error deleting document {document_id}: {e}")
-        return jsonify({"error": f"Failed to delete document {document_id}"}), 500
+        return jsonify({"error": f"Failed to update document: {str(e)}"}), 500

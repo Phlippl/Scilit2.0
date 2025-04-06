@@ -4,6 +4,7 @@ import chromadb
 import logging
 import json
 import uuid
+import re
 from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 
