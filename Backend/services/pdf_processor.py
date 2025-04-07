@@ -119,6 +119,13 @@ class PDFProcessor:
                 page_info['text'] = page_text
                 page_info['length'] = len(page_text)
                 
+                if len(page_text) > 15000:  # 15K characters threshold
+                    logger.warning(f"Very large text block on page {i+1} ({len(page_text)} chars), breaking it up")
+                    # Use natural paragraph breaks when possible
+                    paragraph_sections = re.split(r'\n\s*\n', page_text)
+                    # Rejoin with clear paragraph separators
+                    page_text = '\n\n'.join(paragraph_sections)
+
                 # Add to total text
                 result['text'] += page_text + ' '
                 
@@ -131,6 +138,8 @@ class PDFProcessor:
                 
                 result['pages'].append(page_info)
             
+            gc.collect()
+
             # Perform OCR for pages with little text using thread pool
             if perform_ocr and ocr_page_numbers:
                 if progress_callback:
@@ -422,32 +431,49 @@ class PDFProcessor:
         
         return chunks
     
+    # REPLACE the chunk_text_semantic method with this improved version:
     def chunk_text_semantic(self, text, chunk_size=1000, overlap_size=200):
         """
         Split text into semantically meaningful chunks using spaCy with 
         robust error handling and performance safeguards
-        
-        Args:
-            text: Text to chunk
-            chunk_size: Target chunk size in characters
-            overlap_size: Overlap size in characters
-        
-        Returns:
-            list: List of text chunks
         """
-        # Prevent memory issues with extremely large inputs
-        if len(text) > 100000:  # 100K limit
-            logger.warning(f"Text too large ({len(text)} chars), breaking into segments")
+        # Set maximum runtime and text length limits
+        MAX_TEXT_LENGTH = 250000  # 250K characters max
+        MAX_PARAGRAPHS = 1000     # Prevent excessive memory usage
+        
+        if not text or chunk_size <= 0:
+            return []
+        
+        # Truncate very long texts to prevent memory issues
+        if len(text) > MAX_TEXT_LENGTH:
+            logger.warning(f"Text too large ({len(text)} chars), truncating to {MAX_TEXT_LENGTH} chars")
+            text = text[:MAX_TEXT_LENGTH]
+        
+        # If text is smaller than chunk_size, return as single chunk
+        if len(text) <= chunk_size:
+            return [text]
+        
+        # Break extremely large text into segments before processing
+        if len(text) > 100000:  # 100K threshold
+            logger.info(f"Text too large for single semantic chunking, processing in segments")
             segments = []
-            # Process 50K character segments with 5K overlap
-            for i in range(0, len(text), 45000):
-                end = min(i + 50000, len(text))
-                # Process each segment
-                segment_chunks = self._chunk_text_segment(text[i:end], chunk_size, overlap_size)
+            # Process 50K segments with 5K overlap for context
+            segment_size = 50000
+            overlap = 5000
+            
+            for i in range(0, len(text), segment_size - overlap):
+                end = min(i + segment_size, len(text))
+                segment_text = text[i:end]
+                
+                # Recursively process each segment (they're now small enough)
+                segment_chunks = self.chunk_text(segment_text, chunk_size, overlap_size)
                 segments.extend(segment_chunks)
+                
+                # Force garbage collection after each segment
+                gc.collect()
+                
             return segments
-        
-        
+ 
         # Set maximum runtime and text length limits
         MAX_TEXT_LENGTH = 1_000_000  # 1 million characters max
         MAX_PARAGRAPHS = 5000  # Prevent excessive memory usage
@@ -669,6 +695,8 @@ class PDFProcessor:
         if progress_callback:
             progress_callback("Processing complete", 100)
         
+        gc.collect()
+
         return {
             'text': extracted_text,
             'chunks': chunks_with_pages,
