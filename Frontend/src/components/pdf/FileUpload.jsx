@@ -535,12 +535,18 @@ const FileUpload = () => {
       // saveSuccess will be set by the status polling when processing is actually complete
     } catch (error) {
       console.error('Error saving document:', error);
-      setError(`Error saving document: ${error.message || 'Unknown error'}`);
+      // Show more specific error message
+      let errorMsg = "Error saving document: ";
+      if (error.response && error.response.data && error.response.data.error) {
+        errorMsg += error.response.data.error;
+      } else if (error.message) {
+        errorMsg += error.message;
+      } else {
+        errorMsg += "Unknown error";
+      }
+      setError(errorMsg);
       setSnackbarOpen(true);
       setProcessingFailed(true);
-    } finally {
-      setProcessing(false);
-      setProcessingStage('');
     }
   };
   

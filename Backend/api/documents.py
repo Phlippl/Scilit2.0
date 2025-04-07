@@ -35,7 +35,15 @@ documents_bp = Blueprint('documents', __name__, url_prefix='/api/documents')
 pdf_processor = PDFProcessor()
 
 # Thread pool for background processing
-executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+#executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+def get_executor():
+    global executor
+    # Check if executor is shut down, recreate if needed
+    if hasattr(executor, '_shutdown') and executor._shutdown:
+        logger.info("Recreating shut down executor")
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    return executor
 
 # In-memory processing status tracking (for real app, use Redis or database)
 processing_status = {}
@@ -717,7 +725,8 @@ def save_document():
                 app = current_app._get_current_object()
                 
                 # Hintergrundverarbeitung starten
-                executor.submit(
+                
+                get_executor().submit(
                     process_pdf_background,
                     filepath,
                     document_id,
@@ -915,7 +924,7 @@ def update_document(document_id):
                         save_status_to_file(document_id, update_status)
                     
                     # Start background processing
-                    executor.submit(
+                    get_executor().submit(
                         process_pdf_background,
                         filepath,
                         document_id,

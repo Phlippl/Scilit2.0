@@ -22,7 +22,7 @@ from api.documents import documents_bp
 from api.metadata import metadata_bp
 from api.query import query_bp
 from api.auth import auth_bp
-
+from services.auth_service import AuthService
 
 #app.register_blueprint(auth_bp)
 
