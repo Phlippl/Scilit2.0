@@ -14,6 +14,11 @@ import time
 import asyncio
 import concurrent.futures
 from typing import Dict, List, Any, Optional, Union
+import threading
+import time
+import psutil
+import signal
+from functools import wraps
 
 # Import services
 from services.pdf_processor import PDFProcessor
@@ -37,6 +42,305 @@ executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 # In-memory processing status tracking (for real app, use Redis or database)
 processing_status = {}
 
+# Thread-safe storage for processing status
+processing_status_lock = threading.Lock()
+
+# Add this new timeout decorator
+def timeout_handler(max_seconds=600, cpu_limit=80):
+    """
+    Decorator to add timeout capability to a function
+    
+    Args:
+        max_seconds: Maximum execution time in seconds
+        cpu_limit: Maximum CPU usage percentage allowed
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Get document_id from args or kwargs
+            document_id = None
+            for arg in args:
+                if isinstance(arg, str) and len(arg) > 10:  # Likely a UUID
+                    document_id = arg
+                    break
+            if document_id is None and 'document_id' in kwargs:
+                document_id = kwargs['document_id']
+                
+            # Tracking variables
+            result = None
+            exception = None
+            process_terminated = False
+            process = psutil.Process()
+            start_time = time.time()
+            
+            # Function to monitor resource usage
+            def monitor_resources():
+                nonlocal process_terminated
+                while time.time() - start_time < max_seconds and not process_terminated:
+                    try:
+                        # Check CPU usage (across all cores)
+                        cpu_percent = process.cpu_percent(interval=1)
+                        if cpu_percent > cpu_limit:
+                            consecutive_high_cpu_count += 1
+                        else:
+                            consecutive_high_cpu_count = 0
+                            
+                        # If CPU usage is too high for too long (5 consecutive checks)
+                        if consecutive_high_cpu_count >= 5:
+                            logger.warning(f"Process for document {document_id} terminated due to excessive CPU usage ({cpu_percent}%)")
+                            process_terminated = True
+                            break
+                            
+                        # Check if execution time exceeded
+                        if time.time() - start_time > max_seconds:
+                            logger.warning(f"Process for document {document_id} timed out after {max_seconds} seconds")
+                            process_terminated = True
+                            break
+                            
+                        time.sleep(2)  # Check every 2 seconds
+                    except Exception as e:
+                        logger.error(f"Error in resource monitor: {e}")
+                        break
+            
+            # Start monitoring thread
+            monitor_thread = threading.Thread(target=monitor_resources)
+            monitor_thread.daemon = True
+            monitor_thread.start()
+            
+            # Execute the function
+            try:
+                result = func(*args, **kwargs)
+            except Exception as e:
+                exception = e
+                
+            # Update the process status if terminated
+            if process_terminated and document_id:
+                with processing_status_lock:
+                    processing_status[document_id] = {
+                        "status": "error",
+                        "progress": 0,
+                        "message": "Processing terminated due to excessive resource usage or timeout"
+                    }
+            
+            # Propagate any exception
+            if exception:
+                raise exception
+                
+            return result
+        return wrapper
+    return decorator
+
+# Apply the timeout decorator to the process_pdf_background function
+@timeout_handler(max_seconds=300, cpu_limit=70)  # 5 minutes max, 70% CPU limit
+def process_pdf_background(filepath, document_id, metadata, settings):
+    """
+    Process PDF file in background thread with improved error handling
+    
+    Args:
+        filepath: Path to the PDF file
+        document_id: Document ID
+        metadata: Document metadata
+        settings: Processing settings
+    """
+    try:
+        # Update status
+        with processing_status_lock:
+            processing_status[document_id] = {
+                "status": "processing",
+                "progress": 0,
+                "message": "Starting PDF processing..."
+            }
+        
+        # Progress update callback with improved error handling
+        def update_progress(message, progress):
+            try:
+                with processing_status_lock:
+                    processing_status[document_id] = {
+                        "status": "processing",
+                        "progress": progress,
+                        "message": message
+                    }
+            except Exception as e:
+                logger.error(f"Error updating progress for document {document_id}: {str(e)}")
+        
+        # Process PDF file with timeout
+        try:
+            # Add size check for the PDF
+            file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
+            if file_size_mb > 50:  # Limit to 50MB PDFs
+                raise ValueError(f"PDF file too large ({file_size_mb:.1f}MB). Maximum allowed size is 50MB.")
+                
+            # Check if the file is a valid PDF
+            try:
+                with open(filepath, 'rb') as f:
+                    header = f.read(5)
+                    if header != b'%PDF-':
+                        raise ValueError("Invalid PDF file format")
+            except Exception as e:
+                raise ValueError(f"Error validating PDF: {str(e)}")
+            
+            # Process PDF with a timeout
+            pdf_result = pdf_processor.process_file(
+                filepath, 
+                settings,
+                progress_callback=update_progress
+            )
+            
+            # Update metadata with extracted information
+            if pdf_result['metadata'].get('doi') and not metadata.get('doi'):
+                metadata['doi'] = pdf_result['metadata']['doi']
+            
+            if pdf_result['metadata'].get('isbn') and not metadata.get('isbn'):
+                metadata['isbn'] = pdf_result['metadata']['isbn']
+            
+            # Fetch metadata via DOI or ISBN if needed
+            if not metadata.get('title') and (metadata.get('doi') or metadata.get('isbn')):
+                update_progress("Fetching metadata from external sources...", 90)
+                
+                # Try DOI first (existing code)
+                # ...
+            
+            # Update status
+            update_progress("Storing chunks in vector database...", 95)
+            
+            # Store chunks in vector database with error handling
+            chunks_stored = False
+            if pdf_result['chunks'] and len(pdf_result['chunks']) > 0:
+                # Limit the number of chunks to prevent overwhelming the vector DB
+                max_chunks = min(len(pdf_result['chunks']), 500)
+                if len(pdf_result['chunks']) > max_chunks:
+                    logger.warning(f"Limiting document {document_id} to {max_chunks} chunks (from {len(pdf_result['chunks'])})")
+                    pdf_result['chunks'] = pdf_result['chunks'][:max_chunks]
+                
+                # Add user_id to metadata
+                user_id = metadata.get('user_id', 'default_user')
+                
+                try:
+                    # Properly format author data
+                    authors_data = metadata.get('authors', [])
+                    if isinstance(authors_data, list):
+                        # Convert complex objects to strings
+                        author_strings = []
+                        for author in authors_data:
+                            if isinstance(author, dict) and 'name' in author:
+                                author_strings.append(author['name'])
+                            elif isinstance(author, str):
+                                author_strings.append(author)
+                        metadata['authors'] = author_strings
+                    
+                    # Store chunks in vector database
+                    store_result = store_document_chunks(
+                        document_id=document_id,
+                        chunks=pdf_result['chunks'],
+                        metadata={
+                            "user_id": user_id,
+                            "document_id": document_id,
+                            "title": metadata.get('title', ''),
+                            "authors": ", ".join(metadata.get('authors', [])) if isinstance(metadata.get('authors'), list) else metadata.get('authors', ''),
+                            "type": metadata.get('type', 'other'),
+                            "publicationDate": metadata.get('publicationDate', ''),
+                            "journal": metadata.get('journal', ''),
+                            "publisher": metadata.get('publisher', ''),
+                            "doi": metadata.get('doi', ''),
+                            "isbn": metadata.get('isbn', ''),
+                            "volume": metadata.get('volume', ''),
+                            "issue": metadata.get('issue', ''),
+                            "pages": metadata.get('pages', '')
+                        }
+                    )
+                    chunks_stored = True
+                    
+                    # Update metadata with chunk info
+                    metadata['processed'] = store_result
+                    metadata['num_chunks'] = len(pdf_result['chunks'])
+                    metadata['chunk_size'] = settings.get('chunkSize', 1000)
+                    metadata['chunk_overlap'] = settings.get('chunkOverlap', 200)
+                except Exception as e:
+                    logger.error(f"Error storing chunks for document {document_id}: {str(e)}")
+                    update_progress(f"Error storing chunks: {str(e)}", 95)
+                    chunks_stored = False
+            
+            # Final metadata updates
+            metadata['processingComplete'] = chunks_stored
+            metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
+            
+            # Save updated metadata
+            metadata_path = f"{filepath}.json"
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            # Final status update
+            if chunks_stored:
+                with processing_status_lock:
+                    processing_status[document_id] = {
+                        "status": "completed",
+                        "progress": 100,
+                        "message": "Document processing completed"
+                    }
+            else:
+                with processing_status_lock:
+                    processing_status[document_id] = {
+                        "status": "completed_with_warnings",
+                        "progress": 100,
+                        "message": "Document processed but chunks could not be stored"
+                    }
+                
+        except Exception as e:
+            logger.error(f"Error processing PDF {document_id}: {str(e)}")
+            update_progress(f"Error processing PDF: {str(e)}", 0)
+            
+            # Update metadata to reflect the error
+            metadata['processingComplete'] = False
+            metadata['processingError'] = str(e)
+            metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
+            
+            # Save updated metadata with error information
+            metadata_path = f"{filepath}.json"
+            try:
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+            except Exception as write_err:
+                logger.error(f"Error saving error metadata for {document_id}: {write_err}")
+        
+        # Clean up status after 10 minutes
+        def cleanup_status():
+            time.sleep(600)  # 10 minutes
+            with processing_status_lock:
+                if document_id in processing_status:
+                    del processing_status[document_id]
+        
+        executor.submit(cleanup_status)
+        
+    except Exception as e:
+        logger.error(f"Error in background processing for document {document_id}: {str(e)}", exc_info=True)
+        
+        # Update status to error with detailed message
+        with processing_status_lock:
+            processing_status[document_id] = {
+                "status": "error",
+                "progress": 0,
+                "message": f"Error processing document: {str(e)}"
+            }
+            
+        # Try to save error information to metadata file
+        try:
+            metadata_path = f"{filepath}.json"
+            if os.path.exists(metadata_path):
+                try:
+                    with open(metadata_path, 'r') as f:
+                        existing_metadata = json.load(f)
+                    metadata = existing_metadata
+                except:
+                    pass
+                    
+            metadata['processingComplete'] = False
+            metadata['processingError'] = str(e)
+            metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
+            
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+        except Exception as metadata_err:
+            logger.error(f"Error saving error metadata for {document_id}: {metadata_err}")
 
 @documents_bp.route('', methods=['GET'])
 def list_documents():

@@ -412,114 +412,174 @@ class PDFProcessor:
         
         return chunks
     
-    def chunk_text_semantic(self, text, chunk_size=1000, overlap_size=200):
-        """
-        Split text into semantically meaningful chunks using spaCy
+    # Backend/services/pdf_processor.py (Updated method)
+
+def chunk_text_semantic(self, text, chunk_size=1000, overlap_size=200):
+    """
+    Split text into semantically meaningful chunks using spaCy with 
+    robust error handling and performance safeguards
+    
+    Args:
+        text: Text to chunk
+        chunk_size: Target chunk size in characters
+        overlap_size: Overlap size in characters
+    
+    Returns:
+        list: List of text chunks
+    """
+    # Set maximum runtime and text length limits
+    MAX_TEXT_LENGTH = 1_000_000  # 1 million characters max
+    MAX_PARAGRAPHS = 5000  # Prevent excessive memory usage
+    
+    if not text or chunk_size <= 0:
+        return []
+    
+    # Truncate very long texts to prevent memory issues
+    if len(text) > MAX_TEXT_LENGTH:
+        logger.warning(f"Text too long ({len(text)} chars), truncating to {MAX_TEXT_LENGTH} chars")
+        text = text[:MAX_TEXT_LENGTH]
+    
+    # If text is smaller than chunk_size, return as single chunk
+    if len(text) <= chunk_size:
+        return [text]
+    
+    chunks = []
+    
+    try:
+        # Split text into paragraphs with safeguards
+        paragraphs = re.split(r'\n\s*\n', text)
         
-        Args:
-            text: Text to chunk
-            chunk_size: Target chunk size in characters
-            overlap_size: Overlap size in characters
+        # Apply limits to prevent excessive resource usage
+        if len(paragraphs) > MAX_PARAGRAPHS:
+            logger.warning(f"Too many paragraphs ({len(paragraphs)}), limiting to {MAX_PARAGRAPHS}")
+            paragraphs = paragraphs[:MAX_PARAGRAPHS]
         
-        Returns:
-            list: List of text chunks
-        """
-        if not text or chunk_size <= 0:
-            return []
+        current_chunk = []
+        current_size = 0
         
-        chunks = []
+        # Process time monitoring variables
+        start_time = time.time()
+        paragraph_count = 0
         
-        # If text is smaller than chunk_size, return as single chunk
-        if len(text) <= chunk_size:
-            return [text]
-        
-        try:
-            # Split text into paragraphs
-            paragraphs = re.split(r'\n\s*\n', text)
-            
-            current_chunk = []
-            current_size = 0
-            
-            for paragraph in paragraphs:
-                # Size of current paragraph
-                para_size = len(paragraph)
-                
-                # If paragraph alone is larger than chunk_size, subdivide
-                if para_size > chunk_size:
-                    # If we already have something in current chunk, save it first
-                    if current_size > 0:
-                        chunks.append(' '.join(current_chunk))
-                        current_chunk = []
-                        current_size = 0
-                    
-                    # Split large paragraph into sentences using spaCy
-                    doc = nlp(paragraph)
-                    sentences = [sent.text for sent in doc.sents]
-                    
-                    # Combine sentences into chunks
-                    sentence_chunk = []
-                    sentence_size = 0
-                    
-                    for sentence in sentences:
-                        sent_size = len(sentence)
-                        
-                        # Check if sentence fits in current chunk
-                        if sentence_size + sent_size <= chunk_size:
-                            sentence_chunk.append(sentence)
-                            sentence_size += sent_size
-                        else:
-                            # Save current sentence chunk if not empty
-                            if sentence_size > 0:
-                                chunks.append(' '.join(sentence_chunk))
-                            
-                            # If sentence itself is too large, chunk it directly
-                            if sent_size > chunk_size:
-                                chunks.extend(PDFProcessor.chunk_text(sentence, chunk_size, overlap_size))
-                            else:
-                                # Start new chunk with current sentence
-                                sentence_chunk = [sentence]
-                                sentence_size = sent_size
-                    
-                    # Save remaining sentence chunk if exists
-                    if sentence_chunk:
-                        chunks.append(' '.join(sentence_chunk))
-                
-                # Normal case: Paragraph potentially fits in a chunk
-                elif current_size + para_size <= chunk_size:
-                    current_chunk.append(paragraph)
-                    current_size += para_size
-                else:
-                    # Finish current chunk and start new one
+        for paragraph in paragraphs:
+            # Check for excessive processing time
+            if paragraph_count % 100 == 0 and time.time() - start_time > 120:  # 2 minutes max
+                logger.warning("Semantic chunking taking too long, switching to simple chunking")
+                # Add any accumulated text and process the rest with simple chunking
+                if current_chunk:
                     chunks.append(' '.join(current_chunk))
-                    current_chunk = [paragraph]
-                    current_size = para_size
-            
-            # Add last chunk if exists
-            if current_chunk:
-                chunks.append(' '.join(current_chunk))
-            
-            # Add overlap if needed
-            if overlap_size > 0 and len(chunks) > 1:
-                chunks_with_overlap = [chunks[0]]
-                for i in range(1, len(chunks)):
-                    prev_chunk = chunks[i-1]
-                    curr_chunk = chunks[i]
-                    
-                    # Add overlap
-                    if len(prev_chunk) >= overlap_size:
-                        overlap_text = prev_chunk[-overlap_size:]
-                        chunks_with_overlap.append(overlap_text + curr_chunk)
-                    else:
-                        chunks_with_overlap.append(curr_chunk)
                 
-                chunks = chunks_with_overlap
+                # Use the faster simple chunker for remaining paragraphs
+                remaining_text = ' '.join(paragraphs[paragraph_count:])
+                simple_chunks = self.chunk_text(remaining_text, chunk_size, overlap_size)
+                chunks.extend(simple_chunks)
+                return chunks
             
-            return chunks
+            paragraph_count += 1
+            para_size = len(paragraph)
+            
+            # If paragraph alone is larger than chunk_size, subdivide
+            if para_size > chunk_size:
+                # If we already have something in current chunk, save it first
+                if current_size > 0:
+                    chunks.append(' '.join(current_chunk))
+                    current_chunk = []
+                    current_size = 0
+                
+                # Split large paragraph into sentences using spaCy with timeout protection
+                sentence_splitting_start = time.time()
+                try:
+                    # Set a timeout for spaCy processing
+                    if len(paragraph) > 50000:  # Very large paragraph
+                        logger.warning(f"Very large paragraph ({len(paragraph)} chars), using regex sentence splitting")
+                        # Fallback to regex sentence splitting for very large paragraphs
+                        sentences = re.split(r'(?<=[.!?])\s+', paragraph)
+                    else:
+                        # Use spaCy for better sentence splitting
+                        # Set a timeout to prevent long processing
+                        nlp_timeout = 20  # 20 seconds max for NLP processing
+                        if time.time() - sentence_splitting_start > nlp_timeout:
+                            raise TimeoutError("NLP processing timeout")
+                            
+                        doc = nlp(paragraph)
+                        sentences = [sent.text for sent in doc.sents]
+                    
+                except Exception as e:
+                    logger.warning(f"Error in spaCy sentence splitting: {e}, falling back to regex")
+                    # Fallback to regex sentence splitting
+                    sentences = re.split(r'(?<=[.!?])\s+', paragraph)
+                
+                # Combine sentences into chunks
+                sentence_chunk = []
+                sentence_size = 0
+                
+                for sentence in sentences:
+                    sent_size = len(sentence)
+                    
+                    # Check if sentence fits in current chunk
+                    if sentence_size + sent_size <= chunk_size:
+                        sentence_chunk.append(sentence)
+                        sentence_size += sent_size
+                    else:
+                        # Save current sentence chunk if not empty
+                        if sentence_size > 0:
+                            chunks.append(' '.join(sentence_chunk))
+                        
+                        # If sentence itself is too large, chunk it directly
+                        if sent_size > chunk_size:
+                            # Use simple chunking for very large sentences
+                            sent_chunks = self.chunk_text(sentence, chunk_size, overlap_size)
+                            chunks.extend(sent_chunks)
+                        else:
+                            # Start new chunk with current sentence
+                            sentence_chunk = [sentence]
+                            sentence_size = sent_size
+                
+                # Save remaining sentence chunk if exists
+                if sentence_chunk:
+                    chunks.append(' '.join(sentence_chunk))
+            
+            # Normal case: Paragraph potentially fits in a chunk
+            elif current_size + para_size <= chunk_size:
+                current_chunk.append(paragraph)
+                current_size += para_size
+            else:
+                # Finish current chunk and start new one
+                chunks.append(' '.join(current_chunk))
+                current_chunk = [paragraph]
+                current_size = para_size
         
-        except Exception as e:
-            logger.error(f"Error in semantic chunking: {e}")
-            # Fallback to simpler chunking method
-            return PDFProcessor.chunk_text(text, chunk_size, overlap_size)
+        # Add last chunk if exists
+        if current_chunk:
+            chunks.append(' '.join(current_chunk))
+        
+        # Add overlap if needed
+        if overlap_size > 0 and len(chunks) > 1:
+            chunks_with_overlap = [chunks[0]]
+            for i in range(1, len(chunks)):
+                prev_chunk = chunks[i-1]
+                curr_chunk = chunks[i]
+                
+                # Add overlap
+                if len(prev_chunk) >= overlap_size:
+                    overlap_text = prev_chunk[-overlap_size:]
+                    chunks_with_overlap.append(overlap_text + curr_chunk)
+                else:
+                    chunks_with_overlap.append(curr_chunk)
+            
+            chunks = chunks_with_overlap
+        
+        # Final sanity check to ensure we don't return empty chunks
+        chunks = [chunk for chunk in chunks if chunk.strip()]
+        return chunks
+    
+    except Exception as e:
+        # Log the full error details
+        logger.error(f"Error in semantic chunking: {str(e)}", exc_info=True)
+        
+        # Fallback to simpler chunking method for robustness
+        logger.warning("Falling back to simple chunking due to error")
+        return self.chunk_text(text, chunk_size, overlap_size)
     
     def process_file(self, file_path, settings=None, progress_callback=None):
         """

@@ -12,6 +12,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import concurrent.futures
 
+from utils.resource_monitor import resource_monitor
 import sys
 sys.dont_write_bytecode = True  # Prevents Python from creating .pyc files
 
@@ -182,6 +183,8 @@ def create_app():
             logger.info(f"Request processed in {elapsed:.4f}s")
         return response
     
+    resource_monitor.start()
+
     # Shutdown hook to clean up resources
     @app.teardown_appcontext
     def teardown_resources(exception):
