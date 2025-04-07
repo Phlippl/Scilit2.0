@@ -188,7 +188,17 @@ def create_app():
     # Shutdown hook to clean up resources
     @app.teardown_appcontext
     def teardown_resources(exception):
-        background_executor.shutdown(wait=False)
+        # Proper executor shutdown with timeout
+        from api.documents import executor
+        executor.shutdown(wait=True, cancel_futures=True)  # Für Python 3.9+
+        # Für ältere Python-Versionen:
+        # futures = list(executor._work_queue.queue)
+        # for future in futures:
+        #     future.cancel()
+        # executor.shutdown(wait=True)
+        
+        # Clean up other resources if needed
+        logger.info("Application shutting down, resources cleaned up")
     
     return app
 

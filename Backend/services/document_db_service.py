@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 import mysql.connector
 import uuid
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +12,9 @@ class DocumentDBService:
     """Service für Dokumentenverwaltung mit MySQL"""
     
     def __init__(self, db_config=None):
+       
+        load_dotenv()
+
         if db_config:
             self.db_config = db_config
         else:

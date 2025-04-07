@@ -41,11 +41,17 @@ const DocumentProcessingStatus = ({ documentId, onComplete, onError }) => {
     const fetchStatus = async () => {
       if (!mounted) return;
       
+      let retryCount = 0;
+      const MAX_RETRIES = 5;
+
       try {
         setLoading(true);
         const statusData = await getDocumentStatus(documentId);
         setStatus(statusData);
         
+        // Reset retry counter on success
+        retryCount = 0;
+
         // Call completion callback if processing is done
         if (statusData.status === 'completed' && onComplete) {
           onComplete();
@@ -66,6 +72,27 @@ const DocumentProcessingStatus = ({ documentId, onComplete, onError }) => {
       } finally {
         if (mounted) setLoading(false);
       }
+
+    } catch (err) {
+      retryCount++;
+      console.error(`Error fetching status (attempt ${retryCount}):`, err);
+      
+      if (retryCount >= MAX_RETRIES) {
+        setError('Maximale Anzahl an Versuchen erreicht. Bitte Seite neu laden.');
+        if (onError) onError(err.message);
+        return; // Stop polling
+      }
+      
+      // Exponentielles Backoff
+      const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+      
+      // Continue polling with increased delay
+      timerId = setTimeout(fetchStatus, delay);
+    } finally {
+      if (mounted) setLoading(false);
+    }
+  };
+  
     };
     
     fetchStatus();
