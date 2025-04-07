@@ -45,8 +45,6 @@ processing_status_lock = threading.Lock()
 
 def save_status_to_file(document_id, status_data):
     """Save document processing status to file with app context"""
-    from flask import current_app
-    
     try:
         status_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status')
         os.makedirs(status_dir, exist_ok=True)
@@ -59,6 +57,7 @@ def save_status_to_file(document_id, status_data):
     except Exception as e:
         logger.error(f"Error saving status to file: {e}")
         return False
+
 
 # Add timeout decorator with fixed variable initialization
 def timeout_handler(max_seconds=600, cpu_limit=80):
@@ -160,10 +159,19 @@ def timeout_handler(max_seconds=600, cpu_limit=80):
 
 @documents_bp.route('/status/<document_id>', methods=['GET'])
 def get_document_status(document_id):
-    """Gets the processing status of a document"""
+    """Gets the processing status of a document with improved error handling"""
     try:
-        # TODO: User authentication
+        # User authentication
         user_id = request.headers.get('X-User-ID', 'default_user')
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            try:
+                secret_key = current_app.config['SECRET_KEY']
+                payload = jwt.decode(token, secret_key, algorithms=['HS256'])
+                user_id = payload.get('sub', user_id)
+            except Exception as e:
+                logger.warning(f"JWT decoding failed: {e}")
         
         # Check in-memory status first
         with processing_status_lock:
@@ -182,9 +190,9 @@ def get_document_status(document_id):
             except Exception as e:
                 logger.error(f"Error reading status file: {e}")
         
-        # Check if document exists
-        upload_folder = Path(current_app.config['UPLOAD_FOLDER'])
-        metadata_files = list(upload_folder.glob(f"{document_id}_*.json"))
+        # Check metadata file to determine status
+        user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
+        metadata_files = list(Path(user_upload_dir).glob(f"{document_id}_*.json"))
         
         if not metadata_files:
             return jsonify({"error": "Document not found"}), 404

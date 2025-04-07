@@ -84,12 +84,6 @@ class PDFProcessor:
             # Limit maximum paragraph size to prevent memory issues
             MAX_PARAGRAPH_SIZE = 10000  # 10K characters
 
-            # Split extremely large extracted text blocks
-            if len(page_text) > MAX_PARAGRAPH_SIZE:
-                # Use natural breaks like double newlines to split text
-                split_texts = re.split(r'\n\s*\n', page_text)
-                page_text = '\n\n'.join(split_texts)
-
             # Number of pages to process
             pages_to_process = result['processedPages']
             
@@ -117,9 +111,6 @@ class PDFProcessor:
                 # Extract text
                 page_text = page.get_text()
                 
-                # Limit maximum paragraph size to prevent memory issues
-                MAX_PARAGRAPH_SIZE = 10000  # 10K characters
-
                 # Split extremely large extracted text blocks
                 if len(page_text) > MAX_PARAGRAPH_SIZE:
                     # Use natural breaks like double newlines to split text
@@ -441,49 +432,11 @@ class PDFProcessor:
         
         return chunks
     
-    # REPLACE the chunk_text_semantic method with this improved version:
     def chunk_text_semantic(self, text, chunk_size=1000, overlap_size=200):
         """
         Split text into semantically meaningful chunks using spaCy with 
         robust error handling and performance safeguards
         """
-        # Set maximum runtime and text length limits
-        MAX_TEXT_LENGTH = 250000  # 250K characters max
-        MAX_PARAGRAPHS = 1000     # Prevent excessive memory usage
-        
-        if not text or chunk_size <= 0:
-            return []
-        
-        # Truncate very long texts to prevent memory issues
-        if len(text) > MAX_TEXT_LENGTH:
-            logger.warning(f"Text too large ({len(text)} chars), truncating to {MAX_TEXT_LENGTH} chars")
-            text = text[:MAX_TEXT_LENGTH]
-        
-        # If text is smaller than chunk_size, return as single chunk
-        if len(text) <= chunk_size:
-            return [text]
-        
-        # Break extremely large text into segments before processing
-        if len(text) > 100000:  # 100K threshold
-            logger.info(f"Text too large for single semantic chunking, processing in segments")
-            segments = []
-            # Process 50K segments with 5K overlap for context
-            segment_size = 50000
-            overlap = 5000
-            
-            for i in range(0, len(text), segment_size - overlap):
-                end = min(i + segment_size, len(text))
-                segment_text = text[i:end]
-                
-                # Recursively process each segment (they're now small enough)
-                segment_chunks = self.chunk_text(segment_text, chunk_size, overlap_size)
-                segments.extend(segment_chunks)
-                
-                # Force garbage collection after each segment
-                gc.collect()
-                
-            return segments
- 
         # Set maximum runtime and text length limits
         MAX_TEXT_LENGTH = 1_000_000  # 1 million characters max
         MAX_PARAGRAPHS = 5000  # Prevent excessive memory usage
@@ -499,6 +452,27 @@ class PDFProcessor:
         # If text is smaller than chunk_size, return as single chunk
         if len(text) <= chunk_size:
             return [text]
+        
+        # For extremely large texts, break into segments first
+        if len(text) > 100000:  # 100K threshold
+            logger.info(f"Text too large for single semantic chunking, processing in segments")
+            segments = []
+            # Process 50K segments with 5K overlap for context
+            segment_size = 50000
+            overlap = 5000
+            
+            for i in range(0, len(text), segment_size - overlap):
+                end = min(i + segment_size, len(text))
+                segment_text = text[i:end]
+                
+                # Process each segment with simpler chunking to avoid excessive processing
+                segment_chunks = self.chunk_text(segment_text, chunk_size, overlap_size)
+                segments.extend(segment_chunks)
+                
+                # Force garbage collection after each segment
+                gc.collect()
+                
+            return segments
         
         chunks = []
         

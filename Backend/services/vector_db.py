@@ -65,20 +65,56 @@ except Exception as e:
     logger.warning("Falling back to default embedding function")
     ef = embedding_functions.DefaultEmbeddingFunction()
 
-# Initialize ChromaDB client
-try:
-    client = chromadb.PersistentClient(
-        path=CHROMA_PERSIST_DIR,
-        settings=Settings(
-            allow_reset=True,  # Only for development
-            anonymized_telemetry=False
-        )
-    )
-    logger.info(f"ChromaDB connected at {CHROMA_PERSIST_DIR}")
-except Exception as e:
-    logger.error(f"Failed to connect to ChromaDB: {str(e)}")
-    raise
+# Initialize ChromaDB client with robust retry logic
+def get_chroma_client(max_retries=3, retry_delay=2.0):
+    """
+    Get ChromaDB client with retry logic
+    
+    Args:
+        max_retries: Maximum number of connection attempts
+        retry_delay: Delay between retries in seconds
+        
+    Returns:
+        ChromaDB client
+        
+    Raises:
+        Exception if connection fails after all retries
+    """
+    for attempt in range(max_retries):
+        try:
+            client = chromadb.PersistentClient(
+                path=CHROMA_PERSIST_DIR,
+                settings=Settings(
+                    allow_reset=True,  # Only for development
+                    anonymized_telemetry=False
+                )
+            )
+            logger.info(f"ChromaDB connected at {CHROMA_PERSIST_DIR}")
+            return client
+        except Exception as e:
+            logger.warning(f"ChromaDB connection attempt {attempt+1} failed: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+            else:
+                logger.error(f"Failed to connect to ChromaDB after {max_retries} attempts")
+                raise
 
+try:
+    client = get_chroma_client()
+except Exception as e:
+    logger.error(f"Fatal error connecting to ChromaDB: {str(e)}")
+    # Create a placeholder client that will be reinitialized on first use
+    client = None
+
+def ensure_client():
+    """Ensure ChromaDB client is initialized"""
+    global client
+    if client is None:
+        try:
+            client = get_chroma_client()
+        except Exception as e:
+            logger.error(f"Cannot initialize ChromaDB client: {str(e)}")
+            raise
 
 def get_or_create_collection(collection_name: str):
     """
@@ -93,6 +129,8 @@ def get_or_create_collection(collection_name: str):
     Raises:
         Exception: If collection cannot be created or retrieved
     """
+    ensure_client()
+    
     max_retries = 3
     retry_delay = 1.0
     
@@ -137,23 +175,26 @@ def store_document_chunks(document_id, chunks, metadata):
         user_id = metadata.get('user_id', 'default_user')
         collection = get_or_create_collection(f"user_{user_id}_documents")
         
-        # NEUE FUNKTION: Formatiere Metadaten für ChromaDB
+        # Format metadata for ChromaDB
         def format_metadata_for_chroma(meta_dict):
             formatted = {}
             for key, value in meta_dict.items():
                 if isinstance(value, list):
-                    # Listen in kommagetrennten String umwandeln
+                    # Convert lists to comma-separated string
                     formatted[key] = ", ".join(str(item) for item in value)
                 elif value is None:
-                    # None-Werte durch leere Strings ersetzen
+                    # Replace None values with empty strings
                     formatted[key] = ""
                 else:
-                    # Andere Werte in Strings umwandeln
+                    # Convert other values to strings
                     formatted[key] = str(value)
             return formatted
         
         # Format authors correctly
         processed_metadata = format_metadata_for_chroma(metadata)
+        
+        # Add document_id to metadata
+        processed_metadata["document_id"] = document_id
         
         # Prepare chunk IDs, texts, and metadata
         chunk_ids = []
@@ -173,6 +214,10 @@ def store_document_chunks(document_id, chunks, metadata):
                 chunk_text = chunk
                 page_number = None
             
+            # Skip empty chunks
+            if not chunk_text.strip():
+                continue
+                
             chunk_texts.append(chunk_text)
             
             # Create metadata for this chunk
@@ -189,62 +234,45 @@ def store_document_chunks(document_id, chunks, metadata):
         # Store the document ID we're going to process for later deletion if needed
         temp_id = f"temp_{document_id}_{uuid.uuid4()}"
         
-        # First, add the chunks with a temporary flag
-        for i in range(0, len(chunk_ids), 50):  # Process in batches of 50
-            end_i = min(i + 50, len(chunk_ids))
-            batch_ids = [f"{temp_id}_{j}" for j in range(i, end_i)]
-            
-            batch_metadatas = chunk_metadatas[i:end_i]
-            for meta in batch_metadatas:
-                meta["temp_upload"] = "true"  # Verwende String statt Boolean
-                
-            collection.add(
-                ids=batch_ids,
-                documents=chunk_texts[i:end_i],
-                metadatas=batch_metadatas
-            )
-        
-        # Verify that everything was added successfully
-        temp_results = collection.get(
-            where={"temp_upload": "true"}  # Verwende String statt Boolean
-        )
-        
-        if not temp_results or len(temp_results["ids"]) != len(chunk_ids):
-            logger.error(f"Failed to add all temporary chunks for document {document_id}")
-            # Clean up any temporary chunks that were added
-            collection.delete(where={"temp_upload": "true"})  # Verwende String statt Boolean
-            return False
-        
-        # Now delete existing document chunks
-        existing_chunks = collection.get(
-            where={"document_id": document_id}
-        )
-        
-        if existing_chunks and existing_chunks["ids"]:
-            logger.info(f"Deleting {len(existing_chunks['ids'])} existing chunks for document {document_id}")
-            collection.delete(
+        # Delete any existing chunks for this document
+        try:
+            existing_chunks = collection.get(
                 where={"document_id": document_id}
             )
+            
+            if existing_chunks and existing_chunks["ids"]:
+                logger.info(f"Deleting {len(existing_chunks['ids'])} existing chunks for document {document_id}")
+                collection.delete(
+                    where={"document_id": document_id}
+                )
+        except Exception as e:
+            logger.warning(f"Error deleting existing chunks: {e}")
         
-        # Now add the real chunks (reusing the ones we already added)
-        for i, temp_id in enumerate(temp_results["ids"]):
-            # Update the metadata to remove the temp flag
-            collection.update(
-                ids=[temp_id],
-                metadatas=[{**chunk_metadatas[i], "temp_upload": ""}]  # Leerer String statt None
-            )
+        # Add chunks in batches to avoid timeouts
+        BATCH_SIZE = 50
+        for i in range(0, len(chunk_ids), BATCH_SIZE):
+            end_i = min(i + BATCH_SIZE, len(chunk_ids))
+            
+            batch_ids = chunk_ids[i:end_i]
+            batch_texts = chunk_texts[i:end_i]
+            batch_metadatas = chunk_metadatas[i:end_i]
+                
+            try:
+                collection.add(
+                    ids=batch_ids,
+                    documents=batch_texts,
+                    metadatas=batch_metadatas
+                )
+                logger.info(f"Added batch {i//BATCH_SIZE + 1} with {len(batch_ids)} chunks")
+            except Exception as e:
+                logger.error(f"Error adding chunk batch: {e}")
+                # Continue with next batch instead of failing completely
         
         logger.info(f"Successfully stored {len(chunk_ids)} chunks for document {document_id}")
         return True
         
     except Exception as e:
         logger.error(f"Error storing document chunks: {str(e)}")
-        # Try to clean up any temporary chunks
-        try:
-            collection = get_or_create_collection(f"user_{user_id}_documents")
-            collection.delete(where={"temp_upload": "true"})  # Verwende String statt Boolean
-        except Exception as cleanup_error:
-            logger.error(f"Error cleaning up temporary chunks: {str(cleanup_error)}")
         return False
 
 
@@ -265,6 +293,8 @@ def search_documents(query: str, user_id: str = "default_user",
     Returns:
         list: List of relevant chunks with page numbers
     """
+    ensure_client()
+    
     # Simple in-memory query cache (in a real system, use Redis or similar)
     # Note: This is a module-level cache
     if not hasattr(search_documents, '_cache'):
@@ -296,9 +326,6 @@ def search_documents(query: str, user_id: str = "default_user",
             if 'document_ids' in filters and filters['document_ids']:
                 where_clause["document_id"] = {"$in": filters['document_ids']}
         
-        # Make sure we don't include temporary uploads
-        where_clause["temp_upload"] = None
-        
         # Perform the search
         results = collection.query(
             query_texts=[query],
@@ -327,28 +354,36 @@ def search_documents(query: str, user_id: str = "default_user",
                         except json.JSONDecodeError:
                             logger.warning(f"Failed to parse authors JSON: {metadata['authors']}")
                             authors = []
+                        except Exception:
+                            # Handle author string directly
+                            authors = metadata['authors'].split(', ')
                     else:
                         authors = []
                     
                     # Format source citation
                     source = ""
                     if metadata.get('title'):
-                        if authors and len(authors) > 0:
+                        if authors:
                             # First author with et al. for multiple authors
-                            if len(authors) == 1:
-                                author_text = authors[0].get('name', '')
-                                if ',' in author_text:
-                                    author_text = author_text.split(',')[0].strip()
+                            if isinstance(authors, list) and len(authors) > 0:
+                                if isinstance(authors[0], dict) and 'name' in authors[0]:
+                                    first_author = authors[0]['name']
+                                else:
+                                    first_author = str(authors[0])
                             else:
-                                first_author = authors[0].get('name', '')
-                                if ',' in first_author:
-                                    first_author = first_author.split(',')[0].strip()
-                                author_text = f"{first_author} et al."
+                                first_author = str(authors)
+                                
+                            if ',' in first_author:
+                                first_author = first_author.split(',')[0].strip()
+                                
+                            author_text = first_author
+                            if isinstance(authors, list) and len(authors) > 1:
+                                author_text += " et al."
                             
                             # Extract year from date
                             year = ""
-                            if metadata.get('publication_date'):
-                                year_match = re.search(r'(\d{4})', metadata.get('publication_date', ''))
+                            if metadata.get('publicationDate'):
+                                year_match = re.search(r'(\d{4})', metadata.get('publicationDate', ''))
                                 if year_match:
                                     year = year_match.group(1)
                             
@@ -397,6 +432,8 @@ def delete_document(document_id: str, user_id: str = "default_user") -> bool:
     Returns:
         bool: Success status
     """
+    ensure_client()
+    
     try:
         collection_name = f"user_{user_id}_documents"
         if collection_name not in [c.name for c in client.list_collections()]:

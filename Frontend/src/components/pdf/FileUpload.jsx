@@ -336,6 +336,14 @@ const FileUpload = () => {
     setProcessingError(null);
     
     try {
+      // Check file size for client-side validation
+      const maxFileSizeMB = 20; // 20 MB limit
+      const fileSizeMB = file.size / (1024 * 1024);
+      
+      if (fileSizeMB > maxFileSizeMB) {
+        throw new Error(`Die Datei ist zu groß (${fileSizeMB.toFixed(1)} MB). Maximale Größe ist ${maxFileSizeMB} MB.`);
+      }
+      
       // Process PDF file with progress reporting
       const result = await pdfService.processFile(file, {
         ...settings,
@@ -694,7 +702,7 @@ const FileUpload = () => {
                   color="primary"
                   startIcon={<SaveIcon />}
                   onClick={saveToDatabase}
-                  disabled={processing}
+                  disabled={processing || !metadata?.title}
                 >
                   In Datenbank speichern
                 </Button>
