@@ -22,9 +22,6 @@ from api.documents import documents_bp
 from api.metadata import metadata_bp
 from api.query import query_bp
 from api.auth import auth_bp
-from services.auth_service import AuthService
-
-#app.register_blueprint(auth_bp)
 
 # Import shared components
 import spacy
@@ -113,6 +110,10 @@ def init_directories():
         log_dir = os.path.dirname('scilit.log')
         if log_dir and not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
+            
+        # Create status directory
+        status_dir = os.path.join(UPLOAD_FOLDER, 'status')
+        os.makedirs(status_dir, exist_ok=True)
     except Exception as e:
         logger.error(f"Error creating directories: {e}")
         raise
@@ -126,8 +127,8 @@ def create_app():
 
     app = Flask(__name__)
     
-    # Configure CORS properly
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    # Configure CORS to fix cross-origin issues
+    CORS(app, resources={r"/api/*": {"origins": "*", "supports_credentials": True}})
 
     # Load configuration
     app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -135,27 +136,47 @@ def create_app():
     app.config['CHROMA_PERSIST_DIR'] = CHROMA_PERSIST_DIR
     app.config['ALLOWED_EXTENSIONS'] = ALLOWED_EXTENSIONS
     
-    # Lade Secret Key aus Umgebungsvariable ohne hartcodierten Fallback
-    # Falls nicht vorhanden, wird in der Produktion ein Fehler ausgelöst
+    # Load Secret Key from environment variable without hardcoded fallback
+    # If not present, in production an error will be raised
     if 'SECRET_KEY' not in os.environ and os.environ.get('FLASK_ENV') == 'production':
         raise RuntimeError("SECRET_KEY must be set in production environment")
     
-    # Im Entwicklungsmodus kann ein zufälliger Key generiert werden
+    # In development mode, a random key can be generated
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
     app.config['NLP_MODEL'] = initialize_nlp()
 
-    # Enable CORS
-    CORS(app)
-    
     # Register Blueprints
     app.register_blueprint(documents_bp)
     app.register_blueprint(metadata_bp)
     app.register_blueprint(query_bp)
+    app.register_blueprint(auth_bp)  # Ensure auth_bp is registered
     
     # Start background services check
     background_executor.submit(check_embeddings)
     
+    # Create default test user
+    from services.auth_service import AuthService
+    auth_service = AuthService()
+    
+    # Create a test user for development purposes
+    test_user_email = os.environ.get('VITE_TEST_USER_EMAIL', 'user@example.com')
+    test_user_password = os.environ.get('VITE_TEST_USER_PASSWORD', 'password123')
+    test_user_name = os.environ.get('VITE_TEST_USER_NAME', 'Test User')
+    
+    try:
+        # Check if test user exists
+        user = auth_service.get_user_by_email(test_user_email)
+        if not user:
+            logger.info(f"Creating test user: {test_user_email}")
+            auth_service.create_user(
+                email=test_user_email,
+                password=test_user_password,
+                name=test_user_name
+            )
+    except Exception as e:
+        logger.error(f"Error creating test user: {e}")
+        
     # Root route for health check
     @app.route('/')
     def health_check():
@@ -195,6 +216,11 @@ def create_app():
     
     @app.after_request
     def after_request(response):
+        # Add CORS headers to all responses
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+        
         if hasattr(g, 'start_time'):
             elapsed = time.time() - g.start_time
             logger.info(f"Request processed in {elapsed:.4f}s")
@@ -205,7 +231,7 @@ def create_app():
     # Shutdown hook to clean up resources
     @app.teardown_appcontext
     def teardown_resources(exception):
-        # Graceful shutdown für alle Thread Pools
+        # Graceful shutdown for all Thread Pools
         try:
             from api.documents import executor
             executor.shutdown(wait=False)
@@ -217,9 +243,8 @@ def create_app():
                 background_executor.shutdown(wait=False)
         except Exception as e:
             logger.error(f"Error shutting down background executor: {e}")
-        #pass
+    
     return app
-   
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

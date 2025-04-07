@@ -39,11 +39,15 @@ pdf_processor = PDFProcessor()
 
 def get_executor():
     global executor
-    # Check if executor is shut down, recreate if needed
-    if hasattr(executor, '_shutdown') and executor._shutdown:
-        logger.info("Recreating shut down executor")
+    try:
+        # Prüfe, ob der Executor noch funktioniert
+        executor.submit(lambda: None).result(timeout=0.1)
+        return executor
+    except Exception as e:
+        # Wenn Executor nicht funktioniert oder geschlossen wurde, erstelle einen neuen
+        logger.info(f"Erstelle neuen Executor wegen: {str(e)}")
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-    return executor
+        return executor
 
 # In-memory processing status tracking (for real app, use Redis or database)
 processing_status = {}
