@@ -23,7 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 
+**/.env
+
 .venv
+
 package-lock.json
 
 chroma.sqlite3
