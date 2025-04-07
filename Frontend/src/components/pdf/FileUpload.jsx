@@ -29,7 +29,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HourglassTopIcon from '@mui/icons-material/HourglassTop';
 
-// Services and components
+// Services und Komponenten
 import pdfService from '../../services/pdfService';
 import * as metadataApi from '../../api/metadata';
 import * as documentsApi from '../../api/documents';
@@ -61,6 +61,62 @@ const FullWidthContainer = ({ children }) => (
   </Box>
 );
 
+// Dialog-Komponente für Verarbeitungsfehler
+const ProcessingErrorDialog = ({ open, error, onClose, onRetry }) => {
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="md"
+      fullWidth
+    >
+      <DialogTitle sx={{ bgcolor: 'error.light', color: 'error.contrastText' }}>
+        Verarbeitungsfehler
+      </DialogTitle>
+      <DialogContent>
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="h6" gutterBottom>
+            Bei der Verarbeitung Ihrer PDF-Datei ist ein Fehler aufgetreten
+          </Typography>
+          
+          <Alert severity="error" sx={{ my: 2 }}>
+            {error}
+          </Alert>
+          
+          <Typography variant="body1" paragraph>
+            Die Dokumentenverarbeitung wurde aufgrund eines Fehlers gestoppt. Dies könnte folgende Gründe haben:
+          </Typography>
+          
+          <Box component="ul" sx={{ pl: 3 }}>
+            <Typography component="li">Ungültige oder beschädigte PDF-Datei</Typography>
+            <Typography component="li">PDF-Datei ist zu groß oder komplex</Typography>
+            <Typography component="li">Probleme bei der OCR-Verarbeitung</Typography>
+            <Typography component="li">Systembeschränkungen</Typography>
+            <Typography component="li">Verbindungsprobleme mit externen Diensten</Typography>
+          </Box>
+          
+          <Typography variant="body1" paragraph sx={{ mt: 2 }}>
+            Sie können Folgendes versuchen:
+          </Typography>
+          
+          <Box component="ul" sx={{ pl: 3 }}>
+            <Typography component="li">Verwenden Sie eine kleinere oder einfachere PDF-Datei</Typography>
+            <Typography component="li">Deaktivieren Sie OCR, falls es aktiviert war</Typography>
+            <Typography component="li">Reduzieren Sie die maximale Seitenzahl für die Verarbeitung</Typography>
+            <Typography component="li">Versuchen Sie es später erneut, wenn Systemressourcen verfügbar sind</Typography>
+          </Box>
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Schließen</Button>
+        <Button onClick={onRetry} variant="contained">
+          Mit anderen Einstellungen versuchen
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
 const FileUpload = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -81,6 +137,9 @@ const FileUpload = () => {
   const [processingComplete, setProcessingComplete] = useState(false);
   const [processingFailed, setProcessingFailed] = useState(false);
   const statusIntervalRef = useRef(null);
+  
+  // Fehlerbehandlung
+  const [processingError, setProcessingError] = useState(null);
   
   // Processing settings
   const [settings, setSettings] = useState({
@@ -154,6 +213,27 @@ const FileUpload = () => {
     };
   }, [documentId, currentStep, processingComplete, processingFailed]);
   
+  // Add a monitoring function for long-running processes
+  useEffect(() => {
+    let processingTimer = null;
+    
+    if (processing) {
+      // Set a safety timeout to prevent UI from being stuck in processing state
+      processingTimer = setTimeout(() => {
+        if (processing) {
+          setProcessing(false);
+          setProcessingError("Die Verarbeitung hat zu lange gedauert. Die Operation läuft möglicherweise noch im Hintergrund, aber die Benutzeroberfläche wurde entsperrt.");
+        }
+      }, 600000); // 10 minutes
+    }
+    
+    return () => {
+      if (processingTimer) {
+        clearTimeout(processingTimer);
+      }
+    };
+  }, [processing]);
+  
   /**
    * Check processing status of the document
    */
@@ -219,6 +299,7 @@ const FileUpload = () => {
       setProcessingComplete(false);
       setProcessingFailed(false);
       setDocumentId(null);
+      setProcessingError(null);
       
       // Clear any existing status interval
       if (statusIntervalRef.current) {
@@ -251,6 +332,9 @@ const FileUpload = () => {
     setProcessing(true);
     setCurrentStep(1); // Move to processing step
     
+    // Reset any previous errors
+    setProcessingError(null);
+    
     try {
       // Process PDF file with progress reporting
       const result = await pdfService.processFile(file, {
@@ -271,7 +355,7 @@ const FileUpload = () => {
       
       // If DOI or ISBN was found, try to get metadata
       if (result.metadata.doi || result.metadata.isbn) {
-        setProcessingStage('Fetching metadata...');
+        setProcessingStage('Hole Metadaten...');
         try {
           let fetchedMetadata = null;
           
@@ -338,19 +422,18 @@ const FileUpload = () => {
           type: 'other' // Default document type
         });
         
-        setError('No DOI or ISBN could be extracted from the document. Please enter metadata manually.');
+        setError('Keine DOI oder ISBN konnte aus dem Dokument extrahiert werden. Bitte geben Sie die Metadaten manuell ein.');
         setSnackbarOpen(true);
       }
       
-      setProcessingStage('Processing complete');
+      setProcessingStage('Verarbeitung abgeschlossen');
       setProcessingProgress(100);
       
       // Move to next step
       setCurrentStep(2);
     } catch (error) {
       console.error('Error processing file:', error);
-      setError(`Error processing file: ${error.message}`);
-      setSnackbarOpen(true);
+      setProcessingError(`Fehler bei der Dateiverarbeitung: ${error.message}`);
       setCurrentStep(0); // Back to upload step
     } finally {
       setProcessing(false);
@@ -380,13 +463,13 @@ const FileUpload = () => {
    */
   const saveToDatabase = async () => {
     if (!metadata || !metadata.title) {
-      setError('Title is required');
+      setError('Titel ist erforderlich');
       setSnackbarOpen(true);
       return;
     }
   
     setProcessing(true);
-    setProcessingStage('Saving to database...');
+    setProcessingStage('Speichere in Datenbank...');
     setCurrentStep(3); // Move to saving step
     
     try {
@@ -777,6 +860,19 @@ const FileUpload = () => {
         {/* Settings dialog */}
         {renderSettingsDialog()}
         
+        {/* Processing error dialog */}
+        {processingError && (
+          <ProcessingErrorDialog
+            open={!!processingError}
+            error={processingError}
+            onClose={() => setProcessingError(null)}
+            onRetry={() => {
+              setProcessingError(null);
+              setShowSettings(true);
+            }}
+          />
+        )}
+        
         {/* Error snackbar */}
         <Snackbar
           open={snackbarOpen}
@@ -793,200 +889,3 @@ const FileUpload = () => {
 };
 
 export default FileUpload;
-
-// Add this new component for processor errors
-const ProcessingErrorDialog = ({ open, error, onClose, onRetry }) => {
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      maxWidth="md"
-      fullWidth
-    >
-      <DialogTitle sx={{ bgcolor: 'error.light', color: 'error.contrastText' }}>
-        Processing Error
-      </DialogTitle>
-      <DialogContent>
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="h6" gutterBottom>
-            An error occurred while processing your PDF
-          </Typography>
-          
-          <Alert severity="error" sx={{ my: 2 }}>
-            {error}
-          </Alert>
-          
-          <Typography variant="body1" paragraph>
-            The document processing was stopped due to an error. This could be due to:
-          </Typography>
-          
-          <Box component="ul" sx={{ pl: 3 }}>
-            <Typography component="li">Invalid or corrupted PDF file</Typography>
-            <Typography component="li">PDF file is too large or complex</Typography>
-            <Typography component="li">OCR processing difficulties</Typography>
-            <Typography component="li">System resource limitations</Typography>
-            <Typography component="li">Connection issues with external services</Typography>
-          </Box>
-          
-          <Typography variant="body1" paragraph sx={{ mt: 2 }}>
-            You can try the following:
-          </Typography>
-          
-          <Box component="ul" sx={{ pl: 3 }}>
-            <Typography component="li">Use a smaller or simpler PDF file</Typography>
-            <Typography component="li">Disable OCR if it was enabled</Typography>
-            <Typography component="li">Reduce the maximum pages to process</Typography>
-            <Typography component="li">Try again later when system resources are available</Typography>
-          </Box>
-        </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Close</Button>
-        <Button onClick={onRetry} variant="contained">
-          Try Again with Different Settings
-        </Button>
-      </DialogActions>
-    </Dialog>
-  );
-};
-
-// Add this to the FileUpload component's state
-const [processingError, setProcessingError] = useState(null);
-
-// Modify the processFile function to check for errors more frequently
-const processFile = useCallback(async () => {
-  if (!file) {
-    setError('Please select a file first');
-    setSnackbarOpen(true);
-    return;
-  }
-
-  setProcessing(true);
-  setCurrentStep(1); // Move to processing step
-  
-  // Reset any previous errors
-  setProcessingError(null);
-  
-  try {
-    // Start processing with progress polling
-    const result = await pdfService.processFile(file, {
-      ...settings,
-      progressCallback: (stage, percent) => {
-        setProcessingStage(stage);
-        setProcessingProgress(percent);
-      }
-    });
-    
-    // Start polling for processing status using the document ID
-    const documentId = result.documentId;
-    let pollCount = 0;
-    const maxPolls = 120; // 10 minutes max (5 second intervals)
-    
-    const pollStatus = async () => {
-      try {
-        // Check if component is still mounted
-        if (pollCount >= maxPolls) {
-          setProcessingError("Processing took too long and was terminated");
-          setProcessing(false);
-          return;
-        }
-        
-        pollCount++;
-        
-        // Get status from API
-        const statusResponse = await fetch(`/api/documents/status/${documentId}`);
-        if (!statusResponse.ok) {
-          throw new Error(`Failed to get processing status: ${statusResponse.statusText}`);
-        }
-        
-        const status = await statusResponse.json();
-        
-        // Update status in UI
-        setProcessingStage(status.message || "Processing...");
-        setProcessingProgress(status.progress || 0);
-        
-        // Check for completion or error
-        if (status.status === "completed") {
-          // Processing completed successfully
-          // Set extracted data
-          setExtractedText(result.text);
-          setChunks(result.chunks);
-          setExtractedIdentifiers({
-            doi: result.metadata.doi,
-            isbn: result.metadata.isbn
-          });
-          
-          // Get updated metadata
-          const metadataResponse = await fetch(`/api/documents/${documentId}`);
-          if (metadataResponse.ok) {
-            const updatedMetadata = await metadataResponse.json();
-            setMetadata(updatedMetadata);
-          } else {
-            setMetadata(result.metadata || {});
-          }
-          
-          // Move to next step
-          setCurrentStep(2);
-          setProcessing(false);
-        } 
-        else if (status.status === "error" || status.status === "completed_with_warnings") {
-          // Handle error or warning
-          setProcessingError(status.message || "Unknown processing error");
-          setProcessing(false);
-        }
-        else {
-          // Still processing, poll again in 5 seconds
-          setTimeout(pollStatus, 5000);
-        }
-      } catch (error) {
-        console.error("Error polling status:", error);
-        // Keep polling despite error, in case it's a temporary network issue
-        setTimeout(pollStatus, 5000);
-      }
-    };
-    
-    // Start the polling
-    pollStatus();
-    
-  } catch (error) {
-    console.error('Error during file processing:', error);
-    setError(`Error during file processing: ${error.message}`);
-    setSnackbarOpen(true);
-    setProcessing(false);
-    setCurrentStep(0); // Back to upload step
-  }
-}, [file, settings]);
-
-// Add a monitoring function for long-running processes
-useEffect(() => {
-  let processingTimer = null;
-  
-  if (processing) {
-    // Set a safety timeout to prevent UI from being stuck in processing state
-    processingTimer = setTimeout(() => {
-      if (processing) {
-        setProcessing(false);
-        setProcessingError("Processing timed out. The operation may still be running in the background, but the interface has been unlocked.");
-      }
-    }, 600000); // 10 minutes
-  }
-  
-  return () => {
-    if (processingTimer) {
-      clearTimeout(processingTimer);
-    }
-  };
-}, [processing]);
-
-// Add this at the end of the render function
-{processingError && (
-  <ProcessingErrorDialog
-    open={!!processingError}
-    error={processingError}
-    onClose={() => setProcessingError(null)}
-    onRetry={() => {
-      setProcessingError(null);
-      setShowSettings(true);
-    }}
-  />
-)}
