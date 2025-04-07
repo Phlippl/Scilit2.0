@@ -19,6 +19,7 @@ import time
 import psutil
 import signal
 from functools import wraps
+import jwt
 
 # Import services
 from services.pdf_processor import PDFProcessor
@@ -598,7 +599,117 @@ def process_pdf_background(filepath, document_id, metadata, settings):
             "message": f"Error processing document: {str(e)}"
         }
 
-
+@documents_bp.route('', methods=['POST'])
+def save_document():
+    """Upload und Verarbeitung eines neuen Dokuments mit verbesserter Benutzertrennung"""
+    try:
+        if 'file' not in request.files and not request.form.get('data'):
+            return jsonify({"error": "Keine Datei oder Daten bereitgestellt"}), 400
+        
+        # Metadaten aus dem Formular extrahieren
+        metadata = {}
+        if 'data' in request.form:
+            try:
+                metadata = json.loads(request.form.get('data', '{}'))
+            except json.JSONDecodeError:
+                return jsonify({"error": "Ungültige JSON-Daten"}), 400
+        
+        # Dokument-ID generieren, falls nicht angegeben
+        document_id = metadata.get('id', str(uuid.uuid4()))
+        
+        # Benutzer-ID aus Authentifizierung holen
+        auth_header = request.headers.get('Authorization')
+        user_id = 'default_user'
+        
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            try:
+                # Token decodieren
+                secret_key = current_app.config['SECRET_KEY']
+                payload = jwt.decode(token, secret_key, algorithms=['HS256'])
+                user_id = payload['sub']
+            except:
+                pass
+        
+        metadata['user_id'] = user_id
+        
+        # Benutzer-spezifisches Upload-Verzeichnis erstellen
+        user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
+        os.makedirs(user_upload_dir, exist_ok=True)
+        
+        # PDF-Datei verarbeiten, falls vorhanden
+        if 'file' in request.files:
+            file = request.files['file']
+            if file.filename == '':
+                return jsonify({"error": "Keine Datei ausgewählt"}), 400
+                
+            if not allowed_file(file.filename):
+                return jsonify({"error": "Dateityp nicht erlaubt. Nur PDF-Dateien werden akzeptiert."}), 400
+            
+            # Datei im benutzer-spezifischen Verzeichnis speichern
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(user_upload_dir, f"{document_id}_{filename}")
+            file.save(filepath)
+            
+            # In Datenbank einfügen
+            from services.document_db_service import DocumentDBService
+            doc_db_service = DocumentDBService()
+            doc_db_service.save_document_metadata(
+                document_id=document_id,
+                user_id=user_id,
+                title=metadata.get('title', filename),
+                file_name=filename,
+                file_path=filepath,
+                file_size=os.path.getsize(filepath),
+                metadata=metadata
+            )
+            
+            # Verarbeitungseinstellungen extrahieren
+            processing_settings = {
+                'maxPages': int(metadata.get('maxPages', 0)),
+                'performOCR': bool(metadata.get('performOCR', False)),
+                'chunkSize': int(metadata.get('chunkSize', 1000)),
+                'chunkOverlap': int(metadata.get('chunkOverlap', 200))
+            }
+            
+            # Upload-Metadaten hinzufügen
+            metadata['document_id'] = document_id
+            metadata['filename'] = filename
+            metadata['fileSize'] = os.path.getsize(filepath)
+            metadata['uploadDate'] = datetime.utcnow().isoformat() + 'Z'
+            metadata['filePath'] = filepath
+            metadata['processingComplete'] = False
+            
+            # Initialen Metadaten speichern
+            metadata_path = f"{filepath}.json"
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            # Hintergrundverarbeitung starten
+            executor.submit(
+                process_pdf_background,
+                filepath,
+                document_id,
+                metadata,
+                processing_settings
+            )
+            
+            # Dokument-ID und initiale Metadaten zurückgeben
+            return jsonify({
+                **metadata,
+                "processing_status": {
+                    "status": "processing",
+                    "progress": 0,
+                    "message": "Dokumentupload abgeschlossen. Verarbeitung gestartet..."
+                }
+            })
+                
+        # Nur-Metadaten-Updates wie zuvor...
+            
+    except Exception as e:
+        logger.error(f"Fehler in save_document: {e}")
+        return jsonify({"error": f"Fehler beim Speichern des Dokuments: {str(e)}"}), 500
+    
 @documents_bp.route('', methods=['POST'])
 def save_document():
     """Upload and process a new document"""
