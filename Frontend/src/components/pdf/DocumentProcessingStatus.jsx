@@ -43,56 +43,51 @@ const DocumentProcessingStatus = ({ documentId, onComplete, onError }) => {
       
       let retryCount = 0;
       const MAX_RETRIES = 5;
-
-      try {
-        setLoading(true);
-        const statusData = await getDocumentStatus(documentId);
-        setStatus(statusData);
-        
-        // Reset retry counter on success
-        retryCount = 0;
-
-        // Call completion callback if processing is done
-        if (statusData.status === 'completed' && onComplete) {
-          onComplete();
-        }
-        
-        // Call error callback if processing failed
-        if (statusData.status === 'error' && onError) {
-          onError(statusData.message);
-        }
-        
-        // Continue polling if still processing
-        if (statusData.status === 'processing' || statusData.status === 'pending') {
-          timerId = setTimeout(fetchStatus, 2000); // Poll every 2 seconds
-        }
-      } catch (err) {
-        setError('Fehler beim Abrufen des Verarbeitungsstatus');
-        if (onError) onError(err.message);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-
-    } catch (err) {
-      retryCount++;
-      console.error(`Error fetching status (attempt ${retryCount}):`, err);
       
-      if (retryCount >= MAX_RETRIES) {
-        setError('Maximale Anzahl an Versuchen erreicht. Bitte Seite neu laden.');
-        if (onError) onError(err.message);
-        return; // Stop polling
-      }
+      const attemptFetch = async () => {
+        try {
+          setLoading(true);
+          const statusData = await getDocumentStatus(documentId);
+          setStatus(statusData);
+          
+          // Reset retry counter on success
+          retryCount = 0;
+    
+          // Call completion callback if processing is done
+          if (statusData.status === 'completed' && onComplete) {
+            onComplete();
+          }
+          
+          // Call error callback if processing failed
+          if (statusData.status === 'error' && onError) {
+            onError(statusData.message);
+          }
+          
+          // Continue polling if still processing
+          if (statusData.status === 'processing' || statusData.status === 'pending') {
+            timerId = setTimeout(fetchStatus, 2000); // Poll every 2 seconds
+          }
+        } catch (err) {
+          retryCount++;
+          console.error(`Error fetching status (attempt ${retryCount}):`, err);
+          
+          if (retryCount >= MAX_RETRIES) {
+            setError('Maximale Anzahl an Versuchen erreicht. Bitte Seite neu laden.');
+            if (onError) onError(err.message);
+            return; // Stop polling
+          }
+          
+          // Exponential backoff
+          const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+          
+          // Continue polling with increased delay
+          timerId = setTimeout(attemptFetch, delay);
+        } finally {
+          if (mounted) setLoading(false);
+        }
+      };
       
-      // Exponentielles Backoff
-      const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
-      
-      // Continue polling with increased delay
-      timerId = setTimeout(fetchStatus, delay);
-    } finally {
-      if (mounted) setLoading(false);
-    }
-  };
-  
+      await attemptFetch();
     };
     
     fetchStatus();
