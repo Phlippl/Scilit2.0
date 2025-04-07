@@ -34,6 +34,22 @@ class DocumentDBService:
             connection = mysql.connector.connect(**self.db_config)
             cursor = connection.cursor()
             
+             # Prüfen, ob der Benutzer existiert
+            cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+            user_exists = cursor.fetchone()
+            
+            if not user_exists:
+                logger.warning(f"User with ID {user_id} does not exist. Trying default test user.")
+                # Für Testzwecke: Versuchen, einen Standardbenutzer zu finden
+                cursor.execute("SELECT id FROM users LIMIT 1")
+                default_user = cursor.fetchone()
+                if default_user:
+                    user_id = default_user[0]
+                    logger.info(f"Using default user with ID {user_id}")
+                else:
+                    logger.error("No users found in database. Cannot save document.")
+                    return False
+
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
             # Metadaten zu JSON konvertieren

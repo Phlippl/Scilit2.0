@@ -44,7 +44,9 @@ processing_status = {}
 processing_status_lock = threading.Lock()
 
 def save_status_to_file(document_id, status_data):
-    """Save document processing status to file for persistence"""
+    """Save document processing status to file with app context"""
+    from flask import current_app
+    
     try:
         status_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status')
         os.makedirs(status_dir, exist_ok=True)
@@ -225,7 +227,7 @@ def get_document_status(document_id):
         }), 500
 
 # Apply the timeout decorator to the process_pdf_background function
-@timeout_handler(max_seconds=300, cpu_limit=70)  # 5 minutes max, 70% CPU limit
+@timeout_handler(max_seconds=300, cpu_limit=70)  # 5 Minuten max, 70% CPU limit
 def process_pdf_background(filepath, document_id, metadata, settings):
     """
     Process PDF file in background thread with improved error handling
@@ -236,263 +238,268 @@ def process_pdf_background(filepath, document_id, metadata, settings):
         metadata: Document metadata
         settings: Processing settings
     """
+    from flask import current_app
     import gc
     gc.enable()  # Enable garbage collection
     
-    # Set reasonable limits
-    max_file_size_mb = 50  # Maximum file size to process in MB
-    
-    try:
-        # Check file size
-        file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
-        if file_size_mb > max_file_size_mb:
-            error_msg = f"File too large ({file_size_mb:.1f}MB). Maximum allowed size is {max_file_size_mb}MB."
+    # Mit einem Anwendungskontext arbeiten
+    from app import create_app
+    app = create_app()
+    with app.app_context():
+        # Set reasonable limits
+        max_file_size_mb = 50  # Maximum file size to process in MB
+        
+        try:
+            # Check file size
+            file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
+            if file_size_mb > max_file_size_mb:
+                error_msg = f"File too large ({file_size_mb:.1f}MB). Maximum allowed size is {max_file_size_mb}MB."
+                with processing_status_lock:
+                    processing_status[document_id] = {
+                        "status": "error",
+                        "progress": 0,
+                        "message": error_msg
+                    }
+                    # Save status to file
+                    save_status_to_file(document_id, processing_status[document_id])
+                    
+                # Save error to metadata
+                metadata_path = f"{filepath}.json"
+                metadata['processingComplete'] = False
+                metadata['processingError'] = error_msg
+                metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
+                try:
+                    with open(metadata_path, 'w') as f:
+                        json.dump(metadata, f, indent=2)
+                except Exception as write_err:
+                    logger.error(f"Error saving error metadata for {document_id}: {write_err}")
+                return
+        
+            # Update status
+            with processing_status_lock:
+                processing_status[document_id] = {
+                    "status": "processing",
+                    "progress": 0,
+                    "message": "Starting PDF processing..."
+                }
+                # Save status to file
+                save_status_to_file(document_id, processing_status[document_id])
+            
+            # Progress update callback with improved error handling
+            def update_progress(message, progress):
+                try:
+                    with processing_status_lock:
+                        processing_status[document_id] = {
+                            "status": "processing",
+                            "progress": progress,
+                            "message": message
+                        }
+                        # Save status to file
+                        save_status_to_file(document_id, processing_status[document_id])
+                except Exception as e:
+                    logger.error(f"Error updating progress for document {document_id}: {str(e)}")
+            
+            # Process PDF file
+            try:
+                # Check if the file is a valid PDF
+                try:
+                    with open(filepath, 'rb') as f:
+                        header = f.read(5)
+                        if header != b'%PDF-':
+                            raise ValueError("Invalid PDF file format")
+                except Exception as e:
+                    raise ValueError(f"Error validating PDF: {str(e)}")
+                
+                # Process PDF with progress reporting
+                pdf_result = pdf_processor.process_file(
+                    filepath, 
+                    settings,
+                    progress_callback=update_progress
+                )
+                
+                # Update metadata with extracted information
+                if pdf_result['metadata'].get('doi') and not metadata.get('doi'):
+                    metadata['doi'] = pdf_result['metadata']['doi']
+                
+                if pdf_result['metadata'].get('isbn') and not metadata.get('isbn'):
+                    metadata['isbn'] = pdf_result['metadata']['isbn']
+                
+                # Fetch metadata via DOI or ISBN if needed
+                if not metadata.get('title') and (metadata.get('doi') or metadata.get('isbn')):
+                    update_progress("Fetching metadata from external sources...", 90)
+                    
+                    # Try DOI first
+                    if metadata.get('doi'):
+                        try:
+                            crossref_metadata = fetch_metadata_from_crossref(metadata['doi'])
+                            if crossref_metadata:
+                                # Format and add metadata
+                                title = crossref_metadata.get("title", "")
+                                if isinstance(title, list) and len(title) > 0:
+                                    title = title[0]
+                                
+                                # Update with metadata from CrossRef
+                                metadata.update({
+                                    "title": title,
+                                    "authors": crossref_metadata.get("author", []),
+                                    "publicationDate": crossref_metadata.get("published-print", {}).get("date-parts", [[""]])[0][0],
+                                    "journal": crossref_metadata.get("container-title", ""),
+                                    "publisher": crossref_metadata.get("publisher", ""),
+                                    "volume": crossref_metadata.get("volume", ""),
+                                    "issue": crossref_metadata.get("issue", ""),
+                                    "pages": crossref_metadata.get("page", ""),
+                                    "type": crossref_metadata.get("type", ""),
+                                })
+                        except Exception as e:
+                            logger.error(f"Error fetching CrossRef metadata: {e}")
+                
+                # Update status
+                update_progress("Storing chunks in vector database...", 95)
+                
+                # Store chunks in vector database with error handling
+                chunks_stored = False
+                if pdf_result['chunks'] and len(pdf_result['chunks']) > 0:
+                    # Limit the number of chunks to prevent overwhelming the vector DB
+                    max_chunks = min(len(pdf_result['chunks']), 500)
+                    if len(pdf_result['chunks']) > max_chunks:
+                        logger.warning(f"Limiting document {document_id} to {max_chunks} chunks (from {len(pdf_result['chunks'])})")
+                        pdf_result['chunks'] = pdf_result['chunks'][:max_chunks]
+                    
+                    # Add user_id to metadata
+                    user_id = metadata.get('user_id', 'default_user')
+                    
+                    try:
+                        # Properly format author data
+                        authors_data = metadata.get('authors', [])
+                        if isinstance(authors_data, list):
+                            # Convert complex objects to strings
+                            author_strings = []
+                            for author in authors_data:
+                                if isinstance(author, dict) and 'name' in author:
+                                    author_strings.append(author['name'])
+                                elif isinstance(author, str):
+                                    author_strings.append(author)
+                            metadata['authors'] = author_strings
+                        
+                        # Store chunks in vector database
+                        store_result = store_document_chunks(
+                            document_id=document_id,
+                            chunks=pdf_result['chunks'],
+                            metadata={
+                                "user_id": user_id,
+                                "document_id": document_id,
+                                "title": metadata.get('title', ''),
+                                "authors": ", ".join(metadata.get('authors', [])) if isinstance(metadata.get('authors'), list) else metadata.get('authors', ''),
+                                "type": metadata.get('type', 'other'),
+                                "publicationDate": metadata.get('publicationDate', ''),
+                                "journal": metadata.get('journal', ''),
+                                "publisher": metadata.get('publisher', ''),
+                                "doi": metadata.get('doi', ''),
+                                "isbn": metadata.get('isbn', ''),
+                                "volume": metadata.get('volume', ''),
+                                "issue": metadata.get('issue', ''),
+                                "pages": metadata.get('pages', '')
+                            }
+                        )
+                        chunks_stored = True
+                        
+                        # Update metadata with chunk info
+                        metadata['processed'] = store_result
+                        metadata['num_chunks'] = len(pdf_result['chunks'])
+                        metadata['chunk_size'] = settings.get('chunkSize', 1000)
+                        metadata['chunk_overlap'] = settings.get('chunkOverlap', 200)
+                    except Exception as e:
+                        logger.error(f"Error storing chunks for document {document_id}: {str(e)}")
+                        update_progress(f"Error storing chunks: {str(e)}", 95)
+                        chunks_stored = False
+                
+                # Final metadata updates
+                metadata['processingComplete'] = chunks_stored
+                metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
+                
+                # Save updated metadata
+                metadata_path = f"{filepath}.json"
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+                
+                # Final status update
+                if chunks_stored:
+                    with processing_status_lock:
+                        processing_status[document_id] = {
+                            "status": "completed",
+                            "progress": 100,
+                            "message": "Document processing completed"
+                        }
+                        # Save status to file
+                        save_status_to_file(document_id, processing_status[document_id])
+                else:
+                    with processing_status_lock:
+                        processing_status[document_id] = {
+                            "status": "completed_with_warnings",
+                            "progress": 100,
+                            "message": "Document processed but chunks could not be stored"
+                        }
+                        # Save status to file
+                        save_status_to_file(document_id, processing_status[document_id])
+                    
+            except Exception as e:
+                logger.error(f"Error processing PDF {document_id}: {str(e)}")
+                update_progress(f"Error processing PDF: {str(e)}", 0)
+                
+                # Update metadata to reflect the error
+                metadata['processingComplete'] = False
+                metadata['processingError'] = str(e)
+                metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
+                
+                # Save updated metadata with error information
+                metadata_path = f"{filepath}.json"
+                try:
+                    with open(metadata_path, 'w') as f:
+                        json.dump(metadata, f, indent=2)
+                except Exception as write_err:
+                    logger.error(f"Error saving error metadata for {document_id}: {write_err}")
+            
+            # Clean up status after 10 minutes
+            def cleanup_status():
+                time.sleep(600)  # 10 minutes
+                with processing_status_lock:
+                    if document_id in processing_status:
+                        del processing_status[document_id]
+            
+            executor.submit(cleanup_status)
+            
+        except Exception as e:
+            logger.error(f"Error in background processing for document {document_id}: {str(e)}", exc_info=True)
+            
+            # Update status to error with detailed message
             with processing_status_lock:
                 processing_status[document_id] = {
                     "status": "error",
                     "progress": 0,
-                    "message": error_msg
+                    "message": f"Error processing document: {str(e)}"
                 }
                 # Save status to file
                 save_status_to_file(document_id, processing_status[document_id])
                 
-            # Save error to metadata
-            metadata_path = f"{filepath}.json"
-            metadata['processingComplete'] = False
-            metadata['processingError'] = error_msg
-            metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
+            # Try to save error information to metadata file
             try:
-                with open(metadata_path, 'w') as f:
-                    json.dump(metadata, f, indent=2)
-            except Exception as write_err:
-                logger.error(f"Error saving error metadata for {document_id}: {write_err}")
-            return
-    
-        # Update status
-        with processing_status_lock:
-            processing_status[document_id] = {
-                "status": "processing",
-                "progress": 0,
-                "message": "Starting PDF processing..."
-            }
-            # Save status to file
-            save_status_to_file(document_id, processing_status[document_id])
-        
-        # Progress update callback with improved error handling
-        def update_progress(message, progress):
-            try:
-                with processing_status_lock:
-                    processing_status[document_id] = {
-                        "status": "processing",
-                        "progress": progress,
-                        "message": message
-                    }
-                    # Save status to file
-                    save_status_to_file(document_id, processing_status[document_id])
-            except Exception as e:
-                logger.error(f"Error updating progress for document {document_id}: {str(e)}")
-        
-        # Process PDF file
-        try:
-            # Check if the file is a valid PDF
-            try:
-                with open(filepath, 'rb') as f:
-                    header = f.read(5)
-                    if header != b'%PDF-':
-                        raise ValueError("Invalid PDF file format")
-            except Exception as e:
-                raise ValueError(f"Error validating PDF: {str(e)}")
-            
-            # Process PDF with progress reporting
-            pdf_result = pdf_processor.process_file(
-                filepath, 
-                settings,
-                progress_callback=update_progress
-            )
-            
-            # Update metadata with extracted information
-            if pdf_result['metadata'].get('doi') and not metadata.get('doi'):
-                metadata['doi'] = pdf_result['metadata']['doi']
-            
-            if pdf_result['metadata'].get('isbn') and not metadata.get('isbn'):
-                metadata['isbn'] = pdf_result['metadata']['isbn']
-            
-            # Fetch metadata via DOI or ISBN if needed
-            if not metadata.get('title') and (metadata.get('doi') or metadata.get('isbn')):
-                update_progress("Fetching metadata from external sources...", 90)
-                
-                # Try DOI first
-                if metadata.get('doi'):
+                metadata_path = f"{filepath}.json"
+                if os.path.exists(metadata_path):
                     try:
-                        crossref_metadata = fetch_metadata_from_crossref(metadata['doi'])
-                        if crossref_metadata:
-                            # Format and add metadata
-                            title = crossref_metadata.get("title", "")
-                            if isinstance(title, list) and len(title) > 0:
-                                title = title[0]
-                            
-                            # Update with metadata from CrossRef
-                            metadata.update({
-                                "title": title,
-                                "authors": crossref_metadata.get("author", []),
-                                "publicationDate": crossref_metadata.get("published-print", {}).get("date-parts", [[""]])[0][0],
-                                "journal": crossref_metadata.get("container-title", ""),
-                                "publisher": crossref_metadata.get("publisher", ""),
-                                "volume": crossref_metadata.get("volume", ""),
-                                "issue": crossref_metadata.get("issue", ""),
-                                "pages": crossref_metadata.get("page", ""),
-                                "type": crossref_metadata.get("type", ""),
-                            })
-                    except Exception as e:
-                        logger.error(f"Error fetching CrossRef metadata: {e}")
-            
-            # Update status
-            update_progress("Storing chunks in vector database...", 95)
-            
-            # Store chunks in vector database with error handling
-            chunks_stored = False
-            if pdf_result['chunks'] and len(pdf_result['chunks']) > 0:
-                # Limit the number of chunks to prevent overwhelming the vector DB
-                max_chunks = min(len(pdf_result['chunks']), 500)
-                if len(pdf_result['chunks']) > max_chunks:
-                    logger.warning(f"Limiting document {document_id} to {max_chunks} chunks (from {len(pdf_result['chunks'])})")
-                    pdf_result['chunks'] = pdf_result['chunks'][:max_chunks]
+                        with open(metadata_path, 'r') as f:
+                            existing_metadata = json.load(f)
+                        metadata = existing_metadata
+                    except:
+                        pass
+                        
+                metadata['processingComplete'] = False
+                metadata['processingError'] = str(e)
+                metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
                 
-                # Add user_id to metadata
-                user_id = metadata.get('user_id', 'default_user')
-                
-                try:
-                    # Properly format author data
-                    authors_data = metadata.get('authors', [])
-                    if isinstance(authors_data, list):
-                        # Convert complex objects to strings
-                        author_strings = []
-                        for author in authors_data:
-                            if isinstance(author, dict) and 'name' in author:
-                                author_strings.append(author['name'])
-                            elif isinstance(author, str):
-                                author_strings.append(author)
-                        metadata['authors'] = author_strings
-                    
-                    # Store chunks in vector database
-                    store_result = store_document_chunks(
-                        document_id=document_id,
-                        chunks=pdf_result['chunks'],
-                        metadata={
-                            "user_id": user_id,
-                            "document_id": document_id,
-                            "title": metadata.get('title', ''),
-                            "authors": ", ".join(metadata.get('authors', [])) if isinstance(metadata.get('authors'), list) else metadata.get('authors', ''),
-                            "type": metadata.get('type', 'other'),
-                            "publicationDate": metadata.get('publicationDate', ''),
-                            "journal": metadata.get('journal', ''),
-                            "publisher": metadata.get('publisher', ''),
-                            "doi": metadata.get('doi', ''),
-                            "isbn": metadata.get('isbn', ''),
-                            "volume": metadata.get('volume', ''),
-                            "issue": metadata.get('issue', ''),
-                            "pages": metadata.get('pages', '')
-                        }
-                    )
-                    chunks_stored = True
-                    
-                    # Update metadata with chunk info
-                    metadata['processed'] = store_result
-                    metadata['num_chunks'] = len(pdf_result['chunks'])
-                    metadata['chunk_size'] = settings.get('chunkSize', 1000)
-                    metadata['chunk_overlap'] = settings.get('chunkOverlap', 200)
-                except Exception as e:
-                    logger.error(f"Error storing chunks for document {document_id}: {str(e)}")
-                    update_progress(f"Error storing chunks: {str(e)}", 95)
-                    chunks_stored = False
-            
-            # Final metadata updates
-            metadata['processingComplete'] = chunks_stored
-            metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
-            
-            # Save updated metadata
-            metadata_path = f"{filepath}.json"
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
-            
-            # Final status update
-            if chunks_stored:
-                with processing_status_lock:
-                    processing_status[document_id] = {
-                        "status": "completed",
-                        "progress": 100,
-                        "message": "Document processing completed"
-                    }
-                    # Save status to file
-                    save_status_to_file(document_id, processing_status[document_id])
-            else:
-                with processing_status_lock:
-                    processing_status[document_id] = {
-                        "status": "completed_with_warnings",
-                        "progress": 100,
-                        "message": "Document processed but chunks could not be stored"
-                    }
-                    # Save status to file
-                    save_status_to_file(document_id, processing_status[document_id])
-                
-        except Exception as e:
-            logger.error(f"Error processing PDF {document_id}: {str(e)}")
-            update_progress(f"Error processing PDF: {str(e)}", 0)
-            
-            # Update metadata to reflect the error
-            metadata['processingComplete'] = False
-            metadata['processingError'] = str(e)
-            metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
-            
-            # Save updated metadata with error information
-            metadata_path = f"{filepath}.json"
-            try:
                 with open(metadata_path, 'w') as f:
                     json.dump(metadata, f, indent=2)
-            except Exception as write_err:
-                logger.error(f"Error saving error metadata for {document_id}: {write_err}")
-        
-        # Clean up status after 10 minutes
-        def cleanup_status():
-            time.sleep(600)  # 10 minutes
-            with processing_status_lock:
-                if document_id in processing_status:
-                    del processing_status[document_id]
-        
-        executor.submit(cleanup_status)
-        
-    except Exception as e:
-        logger.error(f"Error in background processing for document {document_id}: {str(e)}", exc_info=True)
-        
-        # Update status to error with detailed message
-        with processing_status_lock:
-            processing_status[document_id] = {
-                "status": "error",
-                "progress": 0,
-                "message": f"Error processing document: {str(e)}"
-            }
-            # Save status to file
-            save_status_to_file(document_id, processing_status[document_id])
-            
-        # Try to save error information to metadata file
-        try:
-            metadata_path = f"{filepath}.json"
-            if os.path.exists(metadata_path):
-                try:
-                    with open(metadata_path, 'r') as f:
-                        existing_metadata = json.load(f)
-                    metadata = existing_metadata
-                except:
-                    pass
-                    
-            metadata['processingComplete'] = False
-            metadata['processingError'] = str(e)
-            metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
-            
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
-        except Exception as metadata_err:
-            logger.error(f"Error saving error metadata for {document_id}: {metadata_err}")
+            except Exception as metadata_err:
+                logger.error(f"Error saving error metadata for {document_id}: {metadata_err}")
 
 @documents_bp.route('', methods=['GET'])
 def list_documents():
@@ -601,18 +608,35 @@ def save_document():
         # Benutzer-Authentifizierung: Zuerst über JWT, ansonsten Fallback über X-User-ID Header
         user_id = 'default_user'
         auth_header = request.headers.get('Authorization')
+        
         if auth_header and auth_header.startswith('Bearer '):
             token = auth_header.split(' ')[1]
-            try:
-                secret_key = current_app.config['SECRET_KEY']
-                payload = jwt.decode(token, secret_key, algorithms=['HS256'])
-                user_id = payload.get('sub', user_id)
-            except Exception as e:
-                logger.warning(f"JWT-Decodierung fehlgeschlagen: {e}")
+            
+            # Robustere Token-Validierung
+            if token and token.count('.') == 2:
+                try:
+                    secret_key = current_app.config['SECRET_KEY']
+                    payload = jwt.decode(token, secret_key, algorithms=['HS256'])
+                    user_id = payload.get('sub', user_id)
+                except Exception as e:
+                    logger.warning(f"JWT-Decodierung fehlgeschlagen: {e}")
+            else:
+                logger.warning(f"Ungültiges Token-Format: {token}")
         else:
             header_user_id = request.headers.get('X-User-ID')
             if header_user_id:
                 user_id = header_user_id
+                
+            # Log für Debugging-Zwecke
+            logger.info(f"Kein Authorization-Header gefunden. Verwendung von X-User-ID: {user_id}")
+        
+        # Für Testzwecke: Wenn Testmodus aktiviert ist und default_user verwendet wird, 
+        # verwenden wir einen speziellen Test-User
+        testUserEnabled = os.environ.get('VITE_TEST_USER_ENABLED', 'false').lower() == 'true'
+        if testUserEnabled and (user_id == 'default_user'):
+            test_user_id = os.environ.get('TEST_USER_ID', 'test-user-id')
+            logger.info(f"Verwende Test-Benutzer-ID: {test_user_id}")
+            user_id = test_user_id
         
         metadata['user_id'] = user_id
         
@@ -642,7 +666,8 @@ def save_document():
             try:
                 from services.document_db_service import DocumentDBService
                 doc_db_service = DocumentDBService()
-                doc_db_service.save_document_metadata(
+                
+                save_result = doc_db_service.save_document_metadata(
                     document_id=document_id,
                     user_id=user_id,
                     title=metadata.get('title', filename),
@@ -651,6 +676,9 @@ def save_document():
                     file_size=os.path.getsize(filepath),
                     metadata=metadata
                 )
+                
+                if not save_result:
+                    logger.warning(f"Dokument konnte nicht in Datenbank gespeichert werden für User: {user_id}")
             except Exception as e:
                 logger.warning(f"Fehler beim Speichern in der Datenbank: {e}")
                 # Falls die DB-Speicherung fehlschlägt, wird der Upload fortgesetzt
@@ -677,6 +705,9 @@ def save_document():
                 with open(metadata_path, 'w') as f:
                     json.dump(metadata, f, indent=2)
                 
+                # Mit App-Kontext ausführen
+                app = current_app._get_current_object()
+                
                 # Hintergrundverarbeitung starten
                 executor.submit(
                     process_pdf_background,
@@ -694,7 +725,10 @@ def save_document():
                 }
                 with processing_status_lock:
                     processing_status[document_id] = initial_status
-                    save_status_to_file(document_id, initial_status)
+                    
+                    # Status mit App-Kontext speichern
+                    with app.app_context():
+                        save_status_to_file(document_id, initial_status)
                 
                 return jsonify({
                     **metadata,

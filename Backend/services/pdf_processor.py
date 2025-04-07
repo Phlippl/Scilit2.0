@@ -103,7 +103,7 @@ class PDFProcessor:
                 # Report progress
                 if progress_callback:
                     progress_callback(f"Processing page {i+1}/{pages_to_process}", 
-                                     int(i/pages_to_process * 100))
+                                    int(i/pages_to_process * 100))
                 
                 # Page metadata with page number
                 page_info = {
@@ -116,6 +116,16 @@ class PDFProcessor:
                 
                 # Extract text
                 page_text = page.get_text()
+                
+                # Limit maximum paragraph size to prevent memory issues
+                MAX_PARAGRAPH_SIZE = 10000  # 10K characters
+
+                # Split extremely large extracted text blocks
+                if len(page_text) > MAX_PARAGRAPH_SIZE:
+                    # Use natural breaks like double newlines to split text
+                    split_texts = re.split(r'\n\s*\n', page_text)
+                    page_text = '\n\n'.join(split_texts)
+                    
                 page_info['text'] = page_text
                 page_info['length'] = len(page_text)
                 

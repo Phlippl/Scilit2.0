@@ -44,6 +44,18 @@ def register():
         'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)
     }, secret_key, algorithm='HS256')
     
+    # Token decodieren und überprüfen
+    try:
+        # Überprüfung des Token-Formats
+        if isinstance(token, bytes):
+            token = token.decode('utf-8')
+        
+        # Überprüfen, ob der Token drei Teile hat
+        if token.count('.') != 2:
+            logger.error(f"Fehler bei Token-Generierung: Falsches Format {token}")
+    except Exception as e:
+        logger.error(f"Fehler beim Überprüfen des generierten Tokens: {e}")
+    
     return jsonify({
         "user": user,
         "token": token
@@ -79,6 +91,10 @@ def login():
         'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)
     }, secret_key, algorithm='HS256')
     
+    # Token decodieren und überprüfen
+    if isinstance(token, bytes):
+        token = token.decode('utf-8')
+    
     return jsonify({
         "user": user,
         "token": token
@@ -93,6 +109,10 @@ def get_current_user():
         return jsonify({"error": "Authentifizierung erforderlich"}), 401
     
     token = auth_header.split(' ')[1]
+    
+    # Robustere Token-Validierung
+    if not token or token.count('.') != 2:
+        return jsonify({"error": "Ungültiger Token-Format"}), 401
     
     try:
         # Token decodieren
@@ -118,6 +138,12 @@ def logout():
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         return jsonify({"error": "Authentifizierung erforderlich"}), 401
+
+    token = auth_header.split(' ')[1]
+    
+    # Robustere Token-Validierung
+    if not token or token.count('.') != 2:
+        return jsonify({"error": "Ungültiger Token-Format"}), 401
 
     # In diesem einfachen Ansatz wird keine serverseitige Aktion ausgeführt.
     # Der Client sollte den Token nach erfolgreicher Abmeldung löschen.

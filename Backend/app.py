@@ -11,6 +11,7 @@ from flask import Flask, jsonify, g, Response, stream_with_context
 from flask_cors import CORS
 from dotenv import load_dotenv
 import concurrent.futures
+import secrets
 
 from utils.resource_monitor import resource_monitor
 import sys
@@ -121,6 +122,8 @@ def create_app():
     # Initialize directories first
     init_directories()
     
+    load_dotenv()
+
     app = Flask(__name__)
     
     # Configure CORS properly
@@ -132,9 +135,15 @@ def create_app():
     app.config['CHROMA_PERSIST_DIR'] = CHROMA_PERSIST_DIR
     app.config['ALLOWED_EXTENSIONS'] = ALLOWED_EXTENSIONS
     
-    # Initialize spaCy model and make available as application variable
+    # Lade Secret Key aus Umgebungsvariable ohne hartcodierten Fallback
+    # Falls nicht vorhanden, wird in der Produktion ein Fehler ausgelöst
+    if 'SECRET_KEY' not in os.environ and os.environ.get('FLASK_ENV') == 'production':
+        raise RuntimeError("SECRET_KEY must be set in production environment")
+    
+    # Im Entwicklungsmodus kann ein zufälliger Key generiert werden
+    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+
     app.config['NLP_MODEL'] = initialize_nlp()
-    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'd99ab36c437447a8f7b83e1b82b85937fd22e1e9424c9ffaf5a07b9b47e6fb80')
 
     # Enable CORS
     CORS(app)
@@ -196,19 +205,19 @@ def create_app():
     # Shutdown hook to clean up resources
     @app.teardown_appcontext
     def teardown_resources(exception):
-        # Proper executor shutdown with timeout
-        #from api.documents import executor
-        #executor.shutdown(wait=True, cancel_futures=True)  # Für Python 3.9+
-        # Für ältere Python-Versionen:
-        # futures = list(executor._work_queue.queue)
-        # for future in futures:
-        #     future.cancel()
-        # executor.shutdown(wait=True)
-        
-        # Clean up other resources if needed
-        #logger.info("Application shutting down, resources cleaned up")
-        pass
-    
+        # Graceful shutdown für alle Thread Pools
+        try:
+            from api.documents import executor
+            executor.shutdown(wait=False)
+        except Exception as e:
+            logger.error(f"Error shutting down document executor: {e}")
+            
+        try:
+            if 'background_executor' in globals():
+                background_executor.shutdown(wait=False)
+        except Exception as e:
+            logger.error(f"Error shutting down background executor: {e}")
+        #pass
     return app
    
 
