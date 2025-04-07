@@ -1,5 +1,5 @@
 // src/components/pdf/FileUpload.jsx
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { 
   Button, 
   CircularProgress, 
@@ -26,8 +26,10 @@ import ArticleIcon from '@mui/icons-material/Article';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SaveIcon from '@mui/icons-material/Save';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ErrorIcon from '@mui/icons-material/Error';
+import HourglassTopIcon from '@mui/icons-material/HourglassTop';
 
-// Services und Komponenten
+// Services and components
 import pdfService from '../../services/pdfService';
 import * as metadataApi from '../../api/metadata';
 import * as documentsApi from '../../api/documents';
@@ -67,33 +69,40 @@ const FileUpload = () => {
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState('');
   
-  // Verarbeitungs-State
+  // Processing-State
   const [processing, setProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState('');
   const [processingProgress, setProcessingProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState(0);
   
-  // Verarbeitungseinstellungen
+  // Document tracking state
+  const [documentId, setDocumentId] = useState(null);
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+  const [processingComplete, setProcessingComplete] = useState(false);
+  const [processingFailed, setProcessingFailed] = useState(false);
+  const statusIntervalRef = useRef(null);
+  
+  // Processing settings
   const [settings, setSettings] = useState({
-    maxPages: 0, // 0 bedeutet alle Seiten
+    maxPages: 0, // 0 means all pages
     chunkSize: 1000,
     chunkOverlap: 200,
     performOCR: false
   });
   const [showSettings, setShowSettings] = useState(false);
   
-  // Ergebnisse
+  // Results
   const [extractedText, setExtractedText] = useState('');
   const [extractedIdentifiers, setExtractedIdentifiers] = useState({ doi: null, isbn: null });
   const [chunks, setChunks] = useState([]);
   const [metadata, setMetadata] = useState(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   
-  // Fehler
+  // Errors
   const [error, setError] = useState('');
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   
-  // Verarbeitungsschritte
+  // Processing steps
   const steps = [
     'PDF hochladen', 
     'Dokument verarbeiten', 
@@ -101,15 +110,97 @@ const FileUpload = () => {
     'In Datenbank speichern'
   ];
 
-  // Authentifizierungsprüfung
+  // Authentication check
   useEffect(() => {
     if (!isAuthenticated) {
       navigate('/login', { state: { from: '/upload' } });
     }
   }, [isAuthenticated, navigate]);
   
+  // Cleanup status polling on unmount
+  useEffect(() => {
+    return () => {
+      if (statusIntervalRef.current) {
+        clearInterval(statusIntervalRef.current);
+      }
+    };
+  }, []);
+  
+  // Poll document status when documentId is set
+  useEffect(() => {
+    if (documentId && currentStep === 3 && !processingComplete && !processingFailed) {
+      // Start polling status
+      if (!statusIntervalRef.current) {
+        setIsCheckingStatus(true);
+        checkDocumentStatus(documentId);
+        
+        statusIntervalRef.current = setInterval(() => {
+          checkDocumentStatus(documentId);
+        }, 3000); // Check every 3 seconds
+      }
+    } else if (processingComplete || processingFailed) {
+      // Stop polling when processing is complete or failed
+      if (statusIntervalRef.current) {
+        clearInterval(statusIntervalRef.current);
+        statusIntervalRef.current = null;
+        setIsCheckingStatus(false);
+      }
+    }
+    
+    return () => {
+      if (statusIntervalRef.current) {
+        clearInterval(statusIntervalRef.current);
+      }
+    };
+  }, [documentId, currentStep, processingComplete, processingFailed]);
+  
   /**
-   * Behandelt die Dateiauswahl
+   * Check processing status of the document
+   */
+  const checkDocumentStatus = async (id) => {
+    try {
+      const response = await documentsApi.getDocumentStatus(id);
+      
+      // Check if processing is complete
+      if (response.status === 'completed') {
+        setProcessingProgress(100);
+        setProcessingStage('Verarbeitung abgeschlossen');
+        setProcessingComplete(true);
+        setIsCheckingStatus(false);
+        setSaveSuccess(true);
+        
+        // Stop polling
+        if (statusIntervalRef.current) {
+          clearInterval(statusIntervalRef.current);
+          statusIntervalRef.current = null;
+        }
+      } 
+      // Check if processing is still ongoing
+      else if (response.status === 'processing') {
+        setProcessingProgress(response.progress || 0);
+        setProcessingStage(response.message || 'Verarbeitung läuft...');
+      }
+      // Check if processing failed
+      else if (response.status === 'error') {
+        setProcessingFailed(true);
+        setError(response.message || 'Fehler bei der Verarbeitung');
+        setSnackbarOpen(true);
+        setIsCheckingStatus(false);
+        
+        // Stop polling
+        if (statusIntervalRef.current) {
+          clearInterval(statusIntervalRef.current);
+          statusIntervalRef.current = null;
+        }
+      }
+    } catch (error) {
+      console.error('Error checking document status:', error);
+      // Don't stop polling on network errors - it might be temporary
+    }
+  };
+  
+  /**
+   * Handle file selection
    */
   const handleFileChange = (event) => {
     const selectedFile = event.target.files[0];
@@ -117,14 +208,23 @@ const FileUpload = () => {
     if (selectedFile && selectedFile.type === 'application/pdf') {
       setFile(selectedFile);
       setFileName(selectedFile.name);
-      // Status für neuen Upload zurücksetzen
+      // Reset state for new upload
       setMetadata(null);
       setExtractedIdentifiers({ doi: null, isbn: null });
       setExtractedText('');
       setChunks([]);
       setError('');
-      setCurrentStep(0); // Zurück zum ersten Schritt
+      setCurrentStep(0); // Back to first step
       setSaveSuccess(false);
+      setProcessingComplete(false);
+      setProcessingFailed(false);
+      setDocumentId(null);
+      
+      // Clear any existing status interval
+      if (statusIntervalRef.current) {
+        clearInterval(statusIntervalRef.current);
+        statusIntervalRef.current = null;
+      }
     } else {
       setError('Bitte wähle eine gültige PDF-Datei aus');
       setSnackbarOpen(true);
@@ -132,14 +232,14 @@ const FileUpload = () => {
   };
   
   /**
-   * Aktualisiert die Verarbeitungseinstellungen
+   * Update processing settings
    */
   const handleSettingsChange = (newSettings) => {
     setSettings(newSettings);
   };
   
   /**
-   * Verarbeitet die hochgeladene PDF
+   * Process the uploaded PDF
    */
   const processFile = useCallback(async () => {
     if (!file) {
@@ -149,10 +249,10 @@ const FileUpload = () => {
     }
 
     setProcessing(true);
-    setCurrentStep(1); // Zum Verarbeitungsschritt wechseln
+    setCurrentStep(1); // Move to processing step
     
     try {
-      // PDF-Datei mit Fortschrittsanzeige verarbeiten
+      // Process PDF file with progress reporting
       const result = await pdfService.processFile(file, {
         ...settings,
         progressCallback: (stage, percent) => {
@@ -161,7 +261,7 @@ const FileUpload = () => {
         }
       });
       
-      // Ergebnisse speichern
+      // Store results
       setExtractedText(result.text);
       setChunks(result.chunks);
       setExtractedIdentifiers({
@@ -169,33 +269,33 @@ const FileUpload = () => {
         isbn: result.metadata.isbn
       });
       
-      // Wenn DOI oder ISBN gefunden wurde, versuche Metadaten zu holen
+      // If DOI or ISBN was found, try to get metadata
       if (result.metadata.doi || result.metadata.isbn) {
-        setProcessingStage('Hole Metadaten...');
+        setProcessingStage('Fetching metadata...');
         try {
           let fetchedMetadata = null;
           
-          // Zuerst DOI versuchen
+          // Try DOI first
           if (result.metadata.doi) {
             fetchedMetadata = await metadataApi.fetchDOIMetadata(result.metadata.doi);
           }
           
-          // Wenn DOI nicht funktioniert hat, ISBN versuchen
+          // If DOI didn't work, try ISBN
           if (!fetchedMetadata && result.metadata.isbn) {
             fetchedMetadata = await metadataApi.fetchISBNMetadata(result.metadata.isbn);
           }
           
           if (fetchedMetadata) {
-            // Dokumenttyp erkennen und setzen
+            // Detect document type and set it
             const detectedType = detectDocumentType(fetchedMetadata);
             
-            // Metadaten mit Dokumenttyp setzen
+            // Set metadata with document type
             setMetadata({
               ...fetchedMetadata,
               type: detectedType
             });
           } else {
-            // Leere Metadatenstruktur erstellen
+            // Create empty metadata structure
             setMetadata({
               title: '',
               authors: [],
@@ -205,13 +305,13 @@ const FileUpload = () => {
               doi: result.metadata.doi || '',
               isbn: result.metadata.isbn || '',
               abstract: '',
-              type: 'other' // Standard-Dokumenttyp
+              type: 'other' // Default document type
             });
           }
         } catch (metadataError) {
-          console.error('Fehler beim Abrufen der Metadaten:', metadataError);
+          console.error('Error fetching metadata:', metadataError);
           
-          // Leere Metadatenstruktur erstellen
+          // Create empty metadata structure
           setMetadata({
             title: '',
             authors: [],
@@ -221,11 +321,11 @@ const FileUpload = () => {
             doi: result.metadata.doi || '',
             isbn: result.metadata.isbn || '',
             abstract: '',
-            type: 'other' // Standard-Dokumenttyp
+            type: 'other' // Default document type
           });
         }
       } else {
-        // Wenn keine Identifikatoren gefunden wurden
+        // If no identifiers were found
         setMetadata({
           title: '',
           authors: [],
@@ -235,33 +335,33 @@ const FileUpload = () => {
           doi: '',
           isbn: '',
           abstract: '',
-          type: 'other' // Standard-Dokumenttyp
+          type: 'other' // Default document type
         });
         
-        setError('Keine DOI oder ISBN konnte aus dem Dokument extrahiert werden. Bitte gib die Metadaten manuell ein.');
+        setError('No DOI or ISBN could be extracted from the document. Please enter metadata manually.');
         setSnackbarOpen(true);
       }
       
-      setProcessingStage('Verarbeitung abgeschlossen');
+      setProcessingStage('Processing complete');
       setProcessingProgress(100);
       
-      // Zum nächsten Schritt
+      // Move to next step
       setCurrentStep(2);
     } catch (error) {
-      console.error('Fehler bei der Dateiverarbeitung:', error);
-      setError(`Fehler bei der Dateiverarbeitung: ${error.message}`);
+      console.error('Error processing file:', error);
+      setError(`Error processing file: ${error.message}`);
       setSnackbarOpen(true);
-      setCurrentStep(0); // Zurück zum Upload-Schritt
+      setCurrentStep(0); // Back to upload step
     } finally {
       setProcessing(false);
     }
   }, [file, settings]);
   
   /**
-   * Behandelt Metadaten-Updates
+   * Handle metadata updates
    */
   const handleMetadataChange = (field, value) => {
-    // Datum-Felder in das ISO-Format konvertieren
+    // Convert date fields to ISO format
     let formattedValue = value;
     if (field === 'publicationDate' || field === 'date' || 
         field === 'conferenceDate' || field === 'lastUpdated' || 
@@ -276,17 +376,18 @@ const FileUpload = () => {
   };
   
   /**
-   * Speichert Dokument in Datenbank
+   * Save document to database
    */
   const saveToDatabase = async () => {
     if (!metadata || !metadata.title) {
-      setError('Titel ist erforderlich');
+      setError('Title is required');
       setSnackbarOpen(true);
       return;
     }
   
     setProcessing(true);
-    setProcessingStage('Speichere in Datenbank...');
+    setProcessingStage('Saving to database...');
+    setCurrentStep(3); // Move to saving step
     
     try {
       // Make sure all chunks have page numbers
@@ -328,15 +429,24 @@ const FileUpload = () => {
   
       // Save document and file to the server
       const savedDoc = await documentsApi.saveDocument(documentData, file);
-  
-      console.log("Document successfully saved:", savedDoc);
       
-      setSaveSuccess(true);
-      setCurrentStep(3); // Move to final step
+      console.log("Document saved with ID:", savedDoc.document_id);
+      
+      // Save the document ID for status checking
+      setDocumentId(savedDoc.document_id || savedDoc.id);
+      
+      // Note: We do NOT immediately set saveSuccess here
+      // Instead, we'll check the processing status before showing success
+      setProcessingStage('Verarbeitungsfortschritt überprüfen...');
+      setProcessingProgress(0);
+      
+      // Update UI to indicate we're waiting for background processing
+      // saveSuccess will be set by the status polling when processing is actually complete
     } catch (error) {
       console.error('Error saving document:', error);
       setError(`Error saving document: ${error.message || 'Unknown error'}`);
       setSnackbarOpen(true);
+      setProcessingFailed(true);
     } finally {
       setProcessing(false);
       setProcessingStage('');
@@ -344,14 +454,14 @@ const FileUpload = () => {
   };
   
   /**
-   * Nach erfolgreicher Speicherung zum Dashboard
+   * Go to dashboard after successful save
    */
   const goToDashboard = () => {
     navigate('/dashboard');
   };
   
   /**
-   * Rendert den Upload-Bereich
+   * Render the upload area
    */
   const renderUploadArea = () => (
     <Box 
@@ -402,7 +512,7 @@ const FileUpload = () => {
   );
   
   /**
-   * Rendert Status der Verarbeitung
+   * Render processing status
    */
   const renderProcessingStatus = () => (
     <Box sx={{ width: '100%', mt: 2 }}>
@@ -441,11 +551,11 @@ const FileUpload = () => {
   );
   
   /**
-   * Rendert Inhalt basierend auf aktuellem Schritt
+   * Render content based on current step
    */
   const renderStepContent = () => {
     switch (currentStep) {
-      case 0: // Upload-Schritt
+      case 0: // Upload step
         return (
           <>
             {renderUploadArea()}
@@ -471,7 +581,7 @@ const FileUpload = () => {
           </>
         );
         
-      case 1: // Verarbeitungsschritt
+      case 1: // Processing step
         return (
           <>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
@@ -483,10 +593,10 @@ const FileUpload = () => {
           </>
         );
         
-      case 2: // Metadaten-Schritt
+      case 2: // Metadata step
         return (
           <Box sx={{ display: 'flex', gap: 4, flexDirection: { xs: 'column', md: 'row' } }}>
-            {/* Metadaten links */}
+            {/* Metadata on left */}
             <Box sx={{ width: { xs: '100%', md: '55%' } }}>
               {metadata && (
                 <MetadataForm
@@ -508,34 +618,86 @@ const FileUpload = () => {
               </Box>
             </Box>
       
-            {/* PDF rechts */}
+            {/* PDF on right */}
             <Box sx={{ width: { xs: '100%', md: '45%' } }}>
               {file && <PDFViewer file={file} height="750px" />}
             </Box>
       
-            {/* Optional: Ladeanzeige */}
+            {/* Optional: Loading indicator */}
             {processing && renderProcessingStatus()}
           </Box>
         );
       
-      case 3: // Erfolgsschritt
+      case 3: // Saving/success step
         return (
           <Box sx={{ textAlign: 'center', py: 4 }}>
-            <CheckCircleIcon sx={{ fontSize: 80, color: 'success.main', mb: 2 }} />
-            <Typography variant="h5" gutterBottom>
-              Dokument erfolgreich gespeichert
-            </Typography>
-            <Typography variant="body1" paragraph>
-              Dein Dokument wurde verarbeitet und zu deiner Literaturdatenbank hinzugefügt.
-            </Typography>
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={goToDashboard}
-              sx={{ mt: 2 }}
-            >
-              Zum Dashboard
-            </Button>
+            {isCheckingStatus ? (
+              // Show waiting state while processing in background
+              <>
+                <Box sx={{ animation: 'pulse 1.5s infinite', mb: 2 }}>
+                  <HourglassTopIcon sx={{ fontSize: 80, color: 'warning.main' }} />
+                </Box>
+                <Typography variant="h5" gutterBottom>
+                  Dokument wird im Hintergrund verarbeitet
+                </Typography>
+                <Typography variant="body1" paragraph>
+                  Die Verarbeitung kann je nach Dokumentgröße einige Minuten dauern.
+                </Typography>
+                {renderProcessingStatus()}
+              </>
+            ) : processingFailed ? (
+              // Show error state
+              <>
+                <ErrorIcon sx={{ fontSize: 80, color: 'error.main', mb: 2 }} />
+                <Typography variant="h5" gutterBottom>
+                  Fehler bei der Verarbeitung
+                </Typography>
+                <Typography variant="body1" paragraph color="error">
+                  {error || 'Bei der Dokumentverarbeitung ist ein Fehler aufgetreten.'}
+                </Typography>
+                <Button
+                  variant="contained"
+                  onClick={() => setCurrentStep(0)}
+                  sx={{ mt: 2, mr: 2 }}
+                >
+                  Erneut versuchen
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={goToDashboard}
+                  sx={{ mt: 2 }}
+                >
+                  Zum Dashboard
+                </Button>
+              </>
+            ) : saveSuccess && processingComplete ? (
+              // Show success state only when processing is actually complete
+              <>
+                <CheckCircleIcon sx={{ fontSize: 80, color: 'success.main', mb: 2 }} />
+                <Typography variant="h5" gutterBottom>
+                  Dokument erfolgreich gespeichert
+                </Typography>
+                <Typography variant="body1" paragraph>
+                  Dein Dokument wurde verarbeitet und zu deiner Literaturdatenbank hinzugefügt.
+                </Typography>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={goToDashboard}
+                  sx={{ mt: 2 }}
+                >
+                  Zum Dashboard
+                </Button>
+              </>
+            ) : (
+              // Default saving state (should not appear for long)
+              <Box sx={{ textAlign: 'center' }}>
+                <CircularProgress size={60} sx={{ mb: 2 }} />
+                <Typography variant="h6">
+                  Speichere Dokument...
+                </Typography>
+              </Box>
+            )}
           </Box>
         );
         
@@ -544,7 +706,7 @@ const FileUpload = () => {
     }
   };
   
-  // Das Settings-Dialog rendern
+  // Render settings dialog
   const renderSettingsDialog = () => (
     <Dialog
       open={showSettings}
@@ -606,16 +768,16 @@ const FileUpload = () => {
             ))}
           </Stepper>
           
-          {/* Schritt-Inhalt */}
+          {/* Step content */}
           <Box sx={{ width: '100%' }}>
             {renderStepContent()}
           </Box>
         </Paper>
         
-        {/* Settings-Dialog */}
+        {/* Settings dialog */}
         {renderSettingsDialog()}
         
-        {/* Fehler-Snackbar */}
+        {/* Error snackbar */}
         <Snackbar
           open={snackbarOpen}
           autoHideDuration={6000}

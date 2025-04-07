@@ -30,8 +30,67 @@ export const getDocuments = async () => {
 };
 
 /**
+ * Ruft den Verarbeitungsstatus eines Dokuments ab
+ * 
+ * @param {string} id - Dokument-ID
+ * @returns {Promise<Object>} Verarbeitungsstatus-Informationen
+ */
+export const getDocumentStatus = async (id) => {
+  try {
+    const response = await apiClient.get(`${DOCUMENTS_ENDPOINT}/status/${id}`);
+    return response.data;
+  } catch (error) {
+    // Im Testmodus Mock-Status basierend auf Zeit zurückgeben
+    if (testUserEnabled && (error.isTestMode || error.code === 'ERR_NETWORK')) {
+      console.log('Nutze Mock-Dokumentstatus');
+      
+      // Erstelle einen zeitbasierten Status, der langsam abgeschlossen wird (für UI-Tests)
+      const startTime = parseInt(localStorage.getItem(`doc_start_${id}`) || Date.now());
+      const currentTime = Date.now();
+      const elapsedSeconds = (currentTime - startTime) / 1000;
+      
+      // Startzeit speichern, falls nicht vorhanden
+      if (!localStorage.getItem(`doc_start_${id}`)) {
+        localStorage.setItem(`doc_start_${id}`, startTime);
+      }
+      
+      // Nach 20 Sekunden abschließen
+      if (elapsedSeconds > 20) {
+        localStorage.removeItem(`doc_start_${id}`); // Aufräumen
+        return {
+          status: 'completed',
+          progress: 100,
+          message: 'Verarbeitung abgeschlossen'
+        };
+      }
+      
+      // Fortschritt simulieren
+      const progress = Math.min(Math.floor(elapsedSeconds * 5), 95); // Max 95% bis zur Fertigstellung
+      
+      // Statusmeldung basierend auf Fortschritt erstellen
+      let message = 'Starte Dokumentverarbeitung...';
+      if (progress > 10) message = 'Extrahiere Text...';
+      if (progress > 30) message = 'Erstelle Dokument-Chunks...';
+      if (progress > 50) message = 'Generiere Einbettungen...';
+      if (progress > 70) message = 'Speichere in Vektordatenbank...';
+      if (progress > 90) message = 'Finalisiere Dokumentverarbeitung...';
+      
+      return {
+        status: 'processing',
+        progress,
+        message
+      };
+    }
+    
+    console.error(`Fehler beim Abrufen des Dokumentstatus für ID ${id}:`, error);
+    throw error.response?.data || {
+      message: 'Dokumentstatus konnte nicht abgerufen werden'
+    };
+  }
+};
+
+/**
  * Gets a specific document by ID
-  * Gets a specific document by ID
  * @param {string} id - Document ID
  * @returns {Promise<Object>} Document data
  */

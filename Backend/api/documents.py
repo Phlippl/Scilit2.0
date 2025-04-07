@@ -103,28 +103,55 @@ def get_document(document_id):
 
 @documents_bp.route('/status/<document_id>', methods=['GET'])
 def get_document_status(document_id):
-    """Get the processing status of a document"""
+    """Gets the processing status of a document"""
     try:
-        # Return current processing status if available
-        if document_id in processing_status:
-            return jsonify(processing_status[document_id])
+        # TODO: User authentication
+        user_id = request.headers.get('X-User-ID', 'default_user')
         
-        # Otherwise check if document exists
+        # Check if document exists
         upload_folder = Path(current_app.config['UPLOAD_FOLDER'])
         metadata_files = list(upload_folder.glob(f"{document_id}_*.json"))
         
-        if metadata_files:
+        if not metadata_files:
+            return jsonify({"error": "Document not found"}), 404
+        
+        # Return processing status if available
+        if document_id in processing_status:
+            return jsonify(processing_status[document_id])
+        
+        # Otherwise check metadata file to determine status
+        with open(metadata_files[0], 'r') as f:
+            metadata = json.load(f)
+            
+        # If processing is flagged as complete
+        if metadata.get('processingComplete', False):
             return jsonify({
                 "status": "completed",
                 "progress": 100,
                 "message": "Document processing completed"
             })
         
-        return jsonify({"error": "Document not found"}), 404
-    
+        # If processing failed
+        if metadata.get('processingError'):
+            return jsonify({
+                "status": "error",
+                "progress": 0,
+                "message": metadata.get('processingError', 'Unknown error')
+            })
+        
+        # If no status found, assume pending
+        return jsonify({
+            "status": "pending",
+            "progress": 0,
+            "message": "Document processing not started or status unknown"
+        })
+            
     except Exception as e:
-        logger.error(f"Error getting document status for {document_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error retrieving status for document {document_id}: {e}")
+        return jsonify({
+            "status": "error", 
+            "message": f"Error retrieving status: {str(e)}"
+        }), 500
 
 
 def process_pdf_background(filepath, document_id, metadata, settings):
