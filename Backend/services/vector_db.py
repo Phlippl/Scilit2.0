@@ -116,7 +116,7 @@ def get_or_create_collection(collection_name: str):
     raise Exception(f"Failed to get or create collection {collection_name} after {max_retries} attempts")
 
 
-def store_document_chunks(document_id: str, chunks: List[Union[str, Dict[str, Any]]], metadata: Dict[str, Any]) -> bool:
+def store_document_chunks(document_id, chunks, metadata):
     """
     Stores document chunks in the vector database with proper transaction handling
     
@@ -137,47 +137,23 @@ def store_document_chunks(document_id: str, chunks: List[Union[str, Dict[str, An
         user_id = metadata.get('user_id', 'default_user')
         collection = get_or_create_collection(f"user_{user_id}_documents")
         
-        # Format authors correctly
-        if 'authors' in metadata:
-            authors_data = metadata['authors']
-            
-            # Convert authors to a standardized format
-            if isinstance(authors_data, list):
-                # Already a list, ensure it's properly formatted
-                authors_json = json.dumps(authors_data)
-            elif isinstance(authors_data, str):
-                try:
-                    # Try to parse as JSON string
-                    json.loads(authors_data)
-                    authors_json = authors_data
-                except json.JSONDecodeError:
-                    # Not JSON, treat as raw string
-                    authors_json = json.dumps([{"name": authors_data}])
-            else:
-                # Unknown format, use empty list
-                authors_json = "[]"
-        else:
-            authors_json = "[]"
+        # NEUE FUNKTION: Formatiere Metadaten für ChromaDB
+        def format_metadata_for_chroma(meta_dict):
+            formatted = {}
+            for key, value in meta_dict.items():
+                if isinstance(value, list):
+                    # Listen in kommagetrennten String umwandeln
+                    formatted[key] = ", ".join(str(item) for item in value)
+                elif value is None:
+                    # None-Werte durch leere Strings ersetzen
+                    formatted[key] = ""
+                else:
+                    # Andere Werte in Strings umwandeln
+                    formatted[key] = str(value)
+            return formatted
         
-        # Prepare base metadata for all chunks
-        base_metadata = {
-            "document_id": document_id,
-            "title": metadata.get('title', ''),
-            "authors": authors_json,
-            "type": metadata.get('type', 'other'),
-            "publication_date": metadata.get('publicationDate', ''),
-            "doi": metadata.get('doi', ''),
-            "isbn": metadata.get('isbn', ''),
-            "journal": metadata.get('journal', ''),
-            "publisher": metadata.get('publisher', ''),
-            # Additional relevant fields
-            "volume": metadata.get('volume', ''),
-            "issue": metadata.get('issue', ''),
-            "pages": metadata.get('pages', ''),
-            "publisherLocation": metadata.get('publisherLocation', ''),
-            "url": metadata.get('url', ''),
-            "abstract": metadata.get('abstract', '')
-        }
+        # Format authors correctly
+        processed_metadata = format_metadata_for_chroma(metadata)
         
         # Prepare chunk IDs, texts, and metadata
         chunk_ids = []
@@ -200,9 +176,9 @@ def store_document_chunks(document_id: str, chunks: List[Union[str, Dict[str, An
             chunk_texts.append(chunk_text)
             
             # Create metadata for this chunk
-            chunk_metadata = base_metadata.copy()
-            chunk_metadata["chunk_index"] = i
-            chunk_metadata["chunk_count"] = len(chunks)
+            chunk_metadata = processed_metadata.copy()
+            chunk_metadata["chunk_index"] = str(i)
+            chunk_metadata["chunk_count"] = str(len(chunks))
             
             # Add page number if available
             if page_number:
@@ -220,7 +196,7 @@ def store_document_chunks(document_id: str, chunks: List[Union[str, Dict[str, An
             
             batch_metadatas = chunk_metadatas[i:end_i]
             for meta in batch_metadatas:
-                meta["temp_upload"] = True
+                meta["temp_upload"] = "true"  # Verwende String statt Boolean
                 
             collection.add(
                 ids=batch_ids,
@@ -230,13 +206,13 @@ def store_document_chunks(document_id: str, chunks: List[Union[str, Dict[str, An
         
         # Verify that everything was added successfully
         temp_results = collection.get(
-            where={"temp_upload": True}
+            where={"temp_upload": "true"}  # Verwende String statt Boolean
         )
         
         if not temp_results or len(temp_results["ids"]) != len(chunk_ids):
             logger.error(f"Failed to add all temporary chunks for document {document_id}")
             # Clean up any temporary chunks that were added
-            collection.delete(where={"temp_upload": True})
+            collection.delete(where={"temp_upload": "true"})  # Verwende String statt Boolean
             return False
         
         # Now delete existing document chunks
@@ -252,10 +228,10 @@ def store_document_chunks(document_id: str, chunks: List[Union[str, Dict[str, An
         
         # Now add the real chunks (reusing the ones we already added)
         for i, temp_id in enumerate(temp_results["ids"]):
-            # Update the metadata to remove the temp flag and use the real ID
+            # Update the metadata to remove the temp flag
             collection.update(
                 ids=[temp_id],
-                metadatas=[{**chunk_metadatas[i], "temp_upload": None}]
+                metadatas=[{**chunk_metadatas[i], "temp_upload": ""}]  # Leerer String statt None
             )
         
         logger.info(f"Successfully stored {len(chunk_ids)} chunks for document {document_id}")
@@ -266,7 +242,7 @@ def store_document_chunks(document_id: str, chunks: List[Union[str, Dict[str, An
         # Try to clean up any temporary chunks
         try:
             collection = get_or_create_collection(f"user_{user_id}_documents")
-            collection.delete(where={"temp_upload": True})
+            collection.delete(where={"temp_upload": "true"})  # Verwende String statt Boolean
         except Exception as cleanup_error:
             logger.error(f"Error cleaning up temporary chunks: {str(cleanup_error)}")
         return False

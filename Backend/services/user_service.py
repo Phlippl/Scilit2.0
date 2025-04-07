@@ -13,6 +13,26 @@ class UserService:
     """Service für Benutzerverwaltung mit MySQL"""
     
     def __init__(self):
+        
+        try:
+            # Versuche, aus Umgebungsvariablen zu lesen
+            self.db_config = {
+                'host': os.environ.get('MYSQL_HOST', 'localhost'),
+                'user': os.environ.get('MYSQL_USER', 'root'),
+                'password': os.environ.get('MYSQL_PASSWORD'),
+                'database': os.environ.get('MYSQL_DATABASE', 'scilit2')
+            }
+            
+            # Falls keine Umgebungsvariable, versuche aus Secrets-Datei zu lesen
+            if not self.db_config['password']:
+                secrets_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'secrets', 'db_password.txt')
+                if os.path.exists(secrets_path):
+                    with open(secrets_path, 'r') as f:
+                        self.db_config['password'] = f.read().strip()
+
+        except Exception as e:
+            print(f"Fehler beim Laden der Datenbankkonfiguration: {e}")
+        
         # Datenbankverbindungsdaten
         self.db_config = {
             'host': os.environ.get('MYSQL_HOST', 'localhost'),
