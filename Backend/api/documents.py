@@ -601,8 +601,9 @@ def process_pdf_background(filepath, document_id, metadata, settings):
 
 @documents_bp.route('', methods=['POST'])
 def save_document():
-    """Upload und Verarbeitung eines neuen Dokuments mit verbesserter Benutzertrennung"""
+    """Upload und Verarbeitung eines neuen Dokuments mit verbesserter Benutzertrennung und Metadaten-Updates"""
     try:
+        # Prüfen, ob Datei oder Metadaten vorhanden sind
         if 'file' not in request.files and not request.form.get('data'):
             return jsonify({"error": "Keine Datei oder Daten bereitgestellt"}), 400
         
@@ -614,22 +615,24 @@ def save_document():
             except json.JSONDecodeError:
                 return jsonify({"error": "Ungültige JSON-Daten"}), 400
         
-        # Dokument-ID generieren, falls nicht angegeben
+        # Dokument-ID generieren, falls nicht vorhanden
         document_id = metadata.get('id', str(uuid.uuid4()))
         
-        # Benutzer-ID aus Authentifizierung holen
-        auth_header = request.headers.get('Authorization')
+        # Benutzer-Authentifizierung: Zuerst über JWT, ansonsten Fallback über X-User-ID Header
         user_id = 'default_user'
-        
+        auth_header = request.headers.get('Authorization')
         if auth_header and auth_header.startswith('Bearer '):
             token = auth_header.split(' ')[1]
             try:
-                # Token decodieren
                 secret_key = current_app.config['SECRET_KEY']
                 payload = jwt.decode(token, secret_key, algorithms=['HS256'])
-                user_id = payload['sub']
-            except:
-                pass
+                user_id = payload.get('sub', user_id)
+            except Exception as e:
+                logger.warning(f"JWT-Decodierung fehlgeschlagen: {e}")
+        else:
+            header_user_id = request.headers.get('X-User-ID')
+            if header_user_id:
+                user_id = header_user_id
         
         metadata['user_id'] = user_id
         
@@ -637,117 +640,43 @@ def save_document():
         user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
         os.makedirs(user_upload_dir, exist_ok=True)
         
-        # PDF-Datei verarbeiten, falls vorhanden
+        # Wenn eine Datei hochgeladen wurde, verarbeite den Upload
         if 'file' in request.files:
             file = request.files['file']
             if file.filename == '':
                 return jsonify({"error": "Keine Datei ausgewählt"}), 400
-                
+            
             if not allowed_file(file.filename):
                 return jsonify({"error": "Dateityp nicht erlaubt. Nur PDF-Dateien werden akzeptiert."}), 400
             
-            # Datei im benutzer-spezifischen Verzeichnis speichern
             filename = secure_filename(file.filename)
             filepath = os.path.join(user_upload_dir, f"{document_id}_{filename}")
-            file.save(filepath)
-            
-            # In Datenbank einfügen
-            from services.document_db_service import DocumentDBService
-            doc_db_service = DocumentDBService()
-            doc_db_service.save_document_metadata(
-                document_id=document_id,
-                user_id=user_id,
-                title=metadata.get('title', filename),
-                file_name=filename,
-                file_path=filepath,
-                file_size=os.path.getsize(filepath),
-                metadata=metadata
-            )
-            
-            # Verarbeitungseinstellungen extrahieren
-            processing_settings = {
-                'maxPages': int(metadata.get('maxPages', 0)),
-                'performOCR': bool(metadata.get('performOCR', False)),
-                'chunkSize': int(metadata.get('chunkSize', 1000)),
-                'chunkOverlap': int(metadata.get('chunkOverlap', 200))
-            }
-            
-            # Upload-Metadaten hinzufügen
-            metadata['document_id'] = document_id
-            metadata['filename'] = filename
-            metadata['fileSize'] = os.path.getsize(filepath)
-            metadata['uploadDate'] = datetime.utcnow().isoformat() + 'Z'
-            metadata['filePath'] = filepath
-            metadata['processingComplete'] = False
-            
-            # Initialen Metadaten speichern
-            metadata_path = f"{filepath}.json"
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
-            
-            # Hintergrundverarbeitung starten
-            executor.submit(
-                process_pdf_background,
-                filepath,
-                document_id,
-                metadata,
-                processing_settings
-            )
-            
-            # Dokument-ID und initiale Metadaten zurückgeben
-            return jsonify({
-                **metadata,
-                "processing_status": {
-                    "status": "processing",
-                    "progress": 0,
-                    "message": "Dokumentupload abgeschlossen. Verarbeitung gestartet..."
-                }
-            })
-                
-        # Nur-Metadaten-Updates wie zuvor...
-            
-    except Exception as e:
-        logger.error(f"Fehler in save_document: {e}")
-        return jsonify({"error": f"Fehler beim Speichern des Dokuments: {str(e)}"}), 500
-    
-@documents_bp.route('', methods=['POST'])
-def save_document():
-    """Upload and process a new document"""
-    try:
-        if 'file' not in request.files and not request.form.get('data'):
-            return jsonify({"error": "No file or data provided"}), 400
-        
-        # Extract metadata from form
-        metadata = {}
-        if 'data' in request.form:
-            try:
-                metadata = json.loads(request.form.get('data', '{}'))
-            except json.JSONDecodeError:
-                return jsonify({"error": "Invalid JSON data"}), 400
-        
-        # Generate document ID if not provided
-        document_id = metadata.get('id', str(uuid.uuid4()))
-        
-        # TODO: User authentication
-        user_id = request.headers.get('X-User-ID', 'default_user')
-        metadata['user_id'] = user_id
-        
-        # Process PDF file if provided
-        if 'file' in request.files:
-            file = request.files['file']
-            if file.filename == '':
-                return jsonify({"error": "No file selected"}), 400
-                
-            if not allowed_file(file.filename):
-                return jsonify({"error": "File type not allowed. Only PDF files are accepted."}), 400
-            
-            # Save file safely
-            filename = secure_filename(file.filename)
-            filepath = get_safe_filepath(document_id, filename)
-            file.save(filepath)
             
             try:
-                # Extract processing settings from metadata
+                file.save(filepath)
+            except Exception as e:
+                logger.error(f"Fehler beim Speichern der Datei: {e}")
+                return jsonify({"error": f"Dateiupload fehlgeschlagen: {str(e)}"}), 500
+            
+            # Optional: Speichern der Dokument-Metadaten in einer Datenbank
+            try:
+                from services.document_db_service import DocumentDBService
+                doc_db_service = DocumentDBService()
+                doc_db_service.save_document_metadata(
+                    document_id=document_id,
+                    user_id=user_id,
+                    title=metadata.get('title', filename),
+                    file_name=filename,
+                    file_path=filepath,
+                    file_size=os.path.getsize(filepath),
+                    metadata=metadata
+                )
+            except Exception as e:
+                logger.warning(f"Fehler beim Speichern in der Datenbank: {e}")
+                # Falls die DB-Speicherung fehlschlägt, wird der Upload fortgesetzt
+            
+            try:
+                # Verarbeitungseinstellungen aus den Metadaten extrahieren
                 processing_settings = {
                     'maxPages': int(metadata.get('maxPages', 0)),
                     'performOCR': bool(metadata.get('performOCR', False)),
@@ -755,7 +684,7 @@ def save_document():
                     'chunkOverlap': int(metadata.get('chunkOverlap', 200))
                 }
                 
-                # Add upload metadata
+                # Upload-spezifische Metadaten ergänzen
                 metadata['document_id'] = document_id
                 metadata['filename'] = filename
                 metadata['fileSize'] = os.path.getsize(filepath)
@@ -763,12 +692,12 @@ def save_document():
                 metadata['filePath'] = filepath
                 metadata['processingComplete'] = False
                 
-                # Save initial metadata
+                # Initiale Metadaten in einer JSON-Datei speichern
                 metadata_path = f"{filepath}.json"
                 with open(metadata_path, 'w') as f:
                     json.dump(metadata, f, indent=2)
                 
-                # Start background processing
+                # Hintergrundverarbeitung starten
                 executor.submit(
                     process_pdf_background,
                     filepath,
@@ -777,66 +706,58 @@ def save_document():
                     processing_settings
                 )
                 
-                # Return document ID and initial metadata
                 return jsonify({
                     **metadata,
                     "processing_status": {
                         "status": "processing",
                         "progress": 0,
-                        "message": "Document upload complete. Processing started..."
+                        "message": "Dokumentupload abgeschlossen. Verarbeitung gestartet..."
                     }
                 })
                 
             except Exception as e:
-                # Clean up on error
+                # Aufräumen im Fehlerfall
                 if os.path.exists(filepath):
                     os.unlink(filepath)
-                logger.error(f"Error processing document: {e}")
-                return jsonify({"error": f"Failed to process document: {str(e)}"}), 500
+                logger.error(f"Fehler bei der Verarbeitung des Dokuments: {e}")
+                return jsonify({"error": f"Fehler beim Verarbeiten des Dokuments: {str(e)}"}), 500
         
-        # Handle metadata-only updates
+        # Fall: Es werden nur Metadaten-Updates durchgeführt (ohne Datei-Upload)
         else:
             try:
-                # Find document
                 upload_folder = Path(current_app.config['UPLOAD_FOLDER'])
                 files = list(upload_folder.glob(f"{document_id}_*"))
                 if not files:
-                    return jsonify({"error": "Document not found"}), 404
+                    return jsonify({"error": "Dokument nicht gefunden"}), 404
                 
-                # Find PDF file
                 pdf_files = [f for f in files if f.suffix.lower() == '.pdf']
                 if not pdf_files:
-                    return jsonify({"error": "PDF file not found"}), 404
+                    return jsonify({"error": "PDF-Datei nicht gefunden"}), 404
                 
                 filepath = str(pdf_files[0])
-                
-                # Update metadata
                 metadata['document_id'] = document_id
                 metadata['updateDate'] = datetime.utcnow().isoformat() + 'Z'
                 
-                # Load existing metadata and update it
                 metadata_path = f"{filepath}.json"
                 if os.path.exists(metadata_path):
                     with open(metadata_path, 'r') as f:
                         existing_metadata = json.load(f)
-                    
-                    # Merge with existing metadata
-                    merged_metadata = {**existing_metadata, **metadata}
-                    metadata = merged_metadata
+                    # Zusammenführen der neuen und bestehenden Metadaten
+                    metadata = {**existing_metadata, **metadata}
                 
-                # Save updated metadata
                 with open(metadata_path, 'w') as f:
                     json.dump(metadata, f, indent=2)
                 
                 return jsonify(metadata)
                 
             except Exception as e:
-                logger.error(f"Error updating document metadata: {e}")
-                return jsonify({"error": f"Failed to update document: {str(e)}"}), 500
-    
+                logger.error(f"Fehler beim Aktualisieren der Dokument-Metadaten: {e}")
+                return jsonify({"error": f"Fehler beim Aktualisieren des Dokuments: {str(e)}"}), 500
+        
     except Exception as e:
-        logger.error(f"Error in save_document: {e}")
-        return jsonify({"error": f"Failed to save document: {str(e)}"}), 500
+        logger.error(f"Fehler in save_document: {e}")
+        return jsonify({"error": f"Fehler beim Speichern des Dokuments: {str(e)}"}), 500
+
 
 
 @documents_bp.route('/<document_id>', methods=['DELETE'])

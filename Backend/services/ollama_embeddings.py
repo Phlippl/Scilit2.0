@@ -5,6 +5,7 @@ import logging
 import time
 from typing import List, Optional
 from chromadb.api.types import Documents, EmbeddingFunction
+import gc
 
 logger = logging.getLogger(__name__)
 

@@ -12,6 +12,7 @@ import io
 import numpy as np
 import json
 from typing import Dict, List, Any, Optional, Union
+import gc 
 
 # PyMuPDF import with error handling
 try:
@@ -80,6 +81,15 @@ class PDFProcessor:
                 'processedPages': min(len(doc), max_pages) if max_pages > 0 else len(doc)
             }
             
+            # Limit maximum paragraph size to prevent memory issues
+            MAX_PARAGRAPH_SIZE = 10000  # 10K characters
+
+            # Split extremely large extracted text blocks
+            if len(page_text) > MAX_PARAGRAPH_SIZE:
+                # Use natural breaks like double newlines to split text
+                split_texts = re.split(r'\n\s*\n', page_text)
+                page_text = '\n\n'.join(split_texts)
+
             # Number of pages to process
             pages_to_process = result['processedPages']
             
@@ -425,6 +435,19 @@ class PDFProcessor:
         Returns:
             list: List of text chunks
         """
+        # Prevent memory issues with extremely large inputs
+        if len(text) > 100000:  # 100K limit
+            logger.warning(f"Text too large ({len(text)} chars), breaking into segments")
+            segments = []
+            # Process 50K character segments with 5K overlap
+            for i in range(0, len(text), 45000):
+                end = min(i + 50000, len(text))
+                # Process each segment
+                segment_chunks = self._chunk_text_segment(text[i:end], chunk_size, overlap_size)
+                segments.extend(segment_chunks)
+            return segments
+        
+        
         # Set maximum runtime and text length limits
         MAX_TEXT_LENGTH = 1_000_000  # 1 million characters max
         MAX_PARAGRAPHS = 5000  # Prevent excessive memory usage
