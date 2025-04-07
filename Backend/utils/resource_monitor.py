@@ -72,7 +72,7 @@ class ResourceMonitor:
         """Check current resource usage and trigger alerts if needed"""
         try:
             # Get CPU usage (interval=0.1 means it measures over 100ms)
-            self.current_cpu = self.process.cpu_percent(interval=0.1)
+            self.current_cpu = self.process.cpu_percent(interval=5000)
             
             # Get memory usage
             mem_info = self.process.memory_info()

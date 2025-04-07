@@ -20,6 +20,10 @@ sys.dont_write_bytecode = True  # Prevents Python from creating .pyc files
 from api.documents import documents_bp
 from api.metadata import metadata_bp
 from api.query import query_bp
+from api.auth import auth_bp
+
+
+#app.register_blueprint(auth_bp)
 
 # Import shared components
 import spacy
@@ -119,6 +123,9 @@ def create_app():
     
     app = Flask(__name__)
     
+    # Configure CORS properly
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
+
     # Load configuration
     app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
     app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
@@ -127,7 +134,8 @@ def create_app():
     
     # Initialize spaCy model and make available as application variable
     app.config['NLP_MODEL'] = initialize_nlp()
-    
+    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'd99ab36c437447a8f7b83e1b82b85937fd22e1e9424c9ffaf5a07b9b47e6fb80')
+
     # Enable CORS
     CORS(app)
     
@@ -189,8 +197,8 @@ def create_app():
     @app.teardown_appcontext
     def teardown_resources(exception):
         # Proper executor shutdown with timeout
-        from api.documents import executor
-        executor.shutdown(wait=True, cancel_futures=True)  # Für Python 3.9+
+        #from api.documents import executor
+        #executor.shutdown(wait=True, cancel_futures=True)  # Für Python 3.9+
         # Für ältere Python-Versionen:
         # futures = list(executor._work_queue.queue)
         # for future in futures:
@@ -198,9 +206,11 @@ def create_app():
         # executor.shutdown(wait=True)
         
         # Clean up other resources if needed
-        logger.info("Application shutting down, resources cleaned up")
+        #logger.info("Application shutting down, resources cleaned up")
+        pass
     
     return app
+   
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

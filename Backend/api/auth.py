@@ -5,6 +5,7 @@ import datetime
 from services.user_service import UserService
 
 logger = logging.getLogger(__name__)
+
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
 # Instanz des UserService erstellen
@@ -110,3 +111,14 @@ def get_current_user():
         return jsonify({"error": "Token abgelaufen"}), 401
     except jwt.InvalidTokenError:
         return jsonify({"error": "Ungültiger Token"}), 401
+    
+@auth_bp.route('/logout', methods=['POST'])
+def logout():
+    """Benutzer abmelden (Client löscht den Token)"""
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({"error": "Authentifizierung erforderlich"}), 401
+
+    # In diesem einfachen Ansatz wird keine serverseitige Aktion ausgeführt.
+    # Der Client sollte den Token nach erfolgreicher Abmeldung löschen.
+    return jsonify({"message": "Erfolgreich ausgeloggt. Bitte Token auf Clientseite entfernen."}), 200
