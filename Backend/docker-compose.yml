@@ -1,14 +1,74 @@
-# Backend/docker-compose.yml
+# docker-compose.yml
 version: '3.8'
 
 services:
-  scilit-backend:
-    build: .
+  # Backend Flask API
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
     ports:
       - "5000:5000"
     volumes:
-      - ./uploads:/app/uploads
-      - ./data:/app/data
+      - ./Backend:/app
+      - ./data/uploads:/app/uploads
+      - ./data/chroma:/app/data/chroma
     env_file:
-      - .env
+      - ./Backend/.env
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=development
+      - PYTHONUNBUFFERED=1
+      - CHROMA_PERSIST_DIR=/app/data/chroma
     restart: unless-stopped
+    networks:
+      - scilit-network
+    depends_on:
+      - ollama
+
+  # Frontend React app
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./Frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://localhost:5000/api
+      - CHOKIDAR_USEPOLLING=true
+      - WDS_SOCKET_PORT=0
+    restart: unless-stopped
+    networks:
+      - scilit-network
+    depends_on:
+      - backend
+
+  # Ollama for embeddings
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./data/ollama:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - scilit-network
+    # Custom healthcheck
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+networks:
+  scilit-network:
+    driver: bridge
+    
+volumes:
+  uploads:
+  chroma_data:
+  ollama_data:

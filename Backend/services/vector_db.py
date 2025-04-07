@@ -5,101 +5,161 @@ import logging
 import json
 import uuid
 import re
+import time
+from typing import List, Dict, Any, Optional, Union
 from chromadb.config import Settings
 from chromadb.utils import embedding_functions
-from services.ollama_embeddings import OllamaEmbeddingFunction  # Update import path
+try:
+    from services.ollama_embeddings import OllamaEmbeddingFunction
+except ImportError:
+    # Handle different import paths (e.g., when running from another directory)
+    try:
+        from .ollama_embeddings import OllamaEmbeddingFunction
+    except ImportError:
+        OllamaEmbeddingFunction = None
 
+# Configure logging
 logger = logging.getLogger(__name__)
 
-# Pfad zum Chroma-Verzeichnis
+# Path to Chroma directory
 CHROMA_PERSIST_DIR = os.environ.get('CHROMA_PERSIST_DIR', './data/chroma')
 
-# Einbettungsfunktion konfigurieren
+# Configure embedding function
 EMBEDDING_FUNCTION_NAME = os.environ.get('EMBEDDING_FUNCTION', 'ollama')  # Default to Ollama
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 HUGGINGFACE_API_KEY = os.environ.get('HUGGINGFACE_API_KEY', '')
 
-# Choose embedding function based on configuration
-if EMBEDDING_FUNCTION_NAME == 'ollama':
-    ollama_url = os.environ.get('OLLAMA_API_URL', 'http://localhost:11434')
-    ollama_model = os.environ.get('OLLAMA_MODEL', 'llama3')
-    ef = OllamaEmbeddingFunction(base_url=ollama_url, model=ollama_model)
-elif EMBEDDING_FUNCTION_NAME == 'openai' and OPENAI_API_KEY:
-    ef = embedding_functions.OpenAIEmbeddingFunction(
-        api_key=OPENAI_API_KEY,
-        model_name="text-embedding-ada-002"
-    )
-elif EMBEDDING_FUNCTION_NAME == 'huggingface' and HUGGINGFACE_API_KEY:
-    ef = embedding_functions.HuggingFaceEmbeddingFunction(
-        api_key=HUGGINGFACE_API_KEY,
-        model_name="sentence-transformers/all-mpnet-base-v2"
-    )
-else:
-    # Default ist die lokale Einbettungsfunktion (weniger leistungsfähig)
-    logger.warning(f"Using default embedding function (less powerful)")
+# Initialize embedding function based on configuration
+ef = None
+embedding_function_error = None
+
+try:
+    if EMBEDDING_FUNCTION_NAME == 'ollama' and OllamaEmbeddingFunction is not None:
+        ollama_url = os.environ.get('OLLAMA_API_URL', 'http://localhost:11434')
+        ollama_model = os.environ.get('OLLAMA_MODEL', 'llama3')
+        ef = OllamaEmbeddingFunction(
+            base_url=ollama_url, 
+            model=ollama_model,
+            fallback_dimension=3072  # Appropriate for Llama3
+        )
+        logger.info(f"Using Ollama embedding function with model {ollama_model}")
+    elif EMBEDDING_FUNCTION_NAME == 'openai' and OPENAI_API_KEY:
+        ef = embedding_functions.OpenAIEmbeddingFunction(
+            api_key=OPENAI_API_KEY,
+            model_name="text-embedding-ada-002"
+        )
+        logger.info("Using OpenAI embedding function")
+    elif EMBEDDING_FUNCTION_NAME == 'huggingface' and HUGGINGFACE_API_KEY:
+        ef = embedding_functions.HuggingFaceEmbeddingFunction(
+            api_key=HUGGINGFACE_API_KEY,
+            model_name="sentence-transformers/all-mpnet-base-v2"
+        )
+        logger.info("Using HuggingFace embedding function")
+    else:
+        # Default to the local embedding function (less powerful)
+        logger.warning(f"Using default embedding function (less powerful)")
+        ef = embedding_functions.DefaultEmbeddingFunction()
+except Exception as e:
+    embedding_function_error = str(e)
+    logger.error(f"Error initializing embedding function: {str(e)}")
+    logger.warning("Falling back to default embedding function")
     ef = embedding_functions.DefaultEmbeddingFunction()
 
-
-# ChromaDB Client initialisieren
+# Initialize ChromaDB client
 try:
     client = chromadb.PersistentClient(
         path=CHROMA_PERSIST_DIR,
         settings=Settings(
-            allow_reset=True,  # Nur für Entwicklung
+            allow_reset=True,  # Only for development
             anonymized_telemetry=False
         )
     )
     logger.info(f"ChromaDB connected at {CHROMA_PERSIST_DIR}")
 except Exception as e:
-    logger.error(f"Failed to connect to ChromaDB: {e}")
+    logger.error(f"Failed to connect to ChromaDB: {str(e)}")
     raise
 
 
-def get_or_create_collection(collection_name):
+def get_or_create_collection(collection_name: str):
     """
-    Collection abrufen oder erstellen
-    """
-    try:
-        # Prüfen, ob Collection bereits existiert
-        collections = client.list_collections()
-        if collection_name in [c.name for c in collections]:
-            return client.get_collection(name=collection_name, embedding_function=ef)
-        else:
-            # Neue Collection erstellen
-            return client.create_collection(name=collection_name, embedding_function=ef)
-    except Exception as e:
-        logger.error(f"Error getting/creating collection {collection_name}: {e}")
-        raise
-
-
-def store_document_chunks(document_id, chunks, metadata):
-    """
-    Speichert die Chunks eines Dokuments in der Vektordatenbank mit Seitenzahlen
+    Get or create a collection with proper error handling
     
     Args:
-        document_id (str): Eindeutige ID des Dokuments
-        chunks (list): Liste von Textabschnitten mit Seitenzuordnung
-        metadata (dict): Metadaten des Dokuments
+        collection_name: Name of the collection
+        
+    Returns:
+        Collection object
+    
+    Raises:
+        Exception: If collection cannot be created or retrieved
+    """
+    max_retries = 3
+    retry_delay = 1.0
+    
+    for attempt in range(max_retries):
+        try:
+            # Check if collection already exists
+            collections = client.list_collections()
+            if collection_name in [c.name for c in collections]:
+                return client.get_collection(name=collection_name, embedding_function=ef)
+            else:
+                # Create new collection
+                return client.create_collection(name=collection_name, embedding_function=ef)
+        except Exception as e:
+            logger.error(f"Error getting/creating collection {collection_name} (attempt {attempt+1}): {str(e)}")
+            
+            # Wait before retry (except on last attempt)
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+    
+    # If we get here, all retries failed
+    raise Exception(f"Failed to get or create collection {collection_name} after {max_retries} attempts")
+
+
+def store_document_chunks(document_id: str, chunks: List[Union[str, Dict[str, Any]]], metadata: Dict[str, Any]) -> bool:
+    """
+    Stores document chunks in the vector database with proper transaction handling
+    
+    Args:
+        document_id: Unique ID of the document
+        chunks: List of text chunks with page assignment
+        metadata: Document metadata
     
     Returns:
-        bool: Erfolg der Speicherung
+        bool: Success status
     """
+    if not chunks or len(chunks) == 0:
+        logger.warning(f"No chunks provided for document {document_id}")
+        return False
+    
     try:
-        # Benutzer-spezifische Collection abrufen/erstellen
+        # Get user-specific collection
         user_id = metadata.get('user_id', 'default_user')
         collection = get_or_create_collection(f"user_{user_id}_documents")
         
-        # Vorhandene Chunks für dieses Dokument entfernen (falls Update)
-        existing_ids = collection.get(
-            where={"document_id": document_id}
-        )
+        # Format authors correctly
+        if 'authors' in metadata:
+            authors_data = metadata['authors']
+            
+            # Convert authors to a standardized format
+            if isinstance(authors_data, list):
+                # Already a list, ensure it's properly formatted
+                authors_json = json.dumps(authors_data)
+            elif isinstance(authors_data, str):
+                try:
+                    # Try to parse as JSON string
+                    json.loads(authors_data)
+                    authors_json = authors_data
+                except json.JSONDecodeError:
+                    # Not JSON, treat as raw string
+                    authors_json = json.dumps([{"name": authors_data}])
+            else:
+                # Unknown format, use empty list
+                authors_json = "[]"
+        else:
+            authors_json = "[]"
         
-        if existing_ids and existing_ids['ids']:
-            collection.delete(ids=existing_ids['ids'])
-            logger.info(f"Deleted {len(existing_ids['ids'])} existing chunks for document {document_id}")
-        
-        # Basis-Metadaten für alle Chunks vorbereiten
-        authors_json = json.dumps(metadata.get('authors', []))
+        # Prepare base metadata for all chunks
         base_metadata = {
             "document_id": document_id,
             "title": metadata.get('title', ''),
@@ -110,7 +170,7 @@ def store_document_chunks(document_id, chunks, metadata):
             "isbn": metadata.get('isbn', ''),
             "journal": metadata.get('journal', ''),
             "publisher": metadata.get('publisher', ''),
-            # Weitere relevante Felder aus den Metadaten
+            # Additional relevant fields
             "volume": metadata.get('volume', ''),
             "issue": metadata.get('issue', ''),
             "pages": metadata.get('pages', ''),
@@ -119,7 +179,7 @@ def store_document_chunks(document_id, chunks, metadata):
             "abstract": metadata.get('abstract', '')
         }
         
-        # Chunk-IDs, Texte und Metadaten vorbereiten
+        # Prepare chunk IDs, texts, and metadata
         chunk_ids = []
         chunk_texts = []
         chunk_metadatas = []
@@ -128,62 +188,125 @@ def store_document_chunks(document_id, chunks, metadata):
             chunk_id = f"{document_id}_chunk_{i}"
             chunk_ids.append(chunk_id)
             
-            # Text aus dem Chunk extrahieren
+            # Extract text from the chunk
             if isinstance(chunk, dict):
                 chunk_text = chunk.get('text', '')
                 page_number = chunk.get('page_number')
             else:
-                # Fallback für einfache Textchunks
+                # Fallback for simple text chunks
                 chunk_text = chunk
                 page_number = None
             
             chunk_texts.append(chunk_text)
             
-            # Metadaten pro Chunk mit Position im Dokument und Seitenzahl
+            # Create metadata for this chunk
             chunk_metadata = base_metadata.copy()
             chunk_metadata["chunk_index"] = i
             chunk_metadata["chunk_count"] = len(chunks)
             
-            # Seitennummer hinzufügen
+            # Add page number if available
             if page_number:
                 chunk_metadata["page"] = str(page_number)
             
             chunk_metadatas.append(chunk_metadata)
         
-        # Chunks in der Collection speichern (batch-weise)
-        batch_size = 100  # Batches von maximal 100 Chunks
-        for i in range(0, len(chunk_ids), batch_size):
-            end_idx = min(i + batch_size, len(chunk_ids))
+        # Store the document ID we're going to process for later deletion if needed
+        temp_id = f"temp_{document_id}_{uuid.uuid4()}"
+        
+        # First, add the chunks with a temporary flag
+        for i in range(0, len(chunk_ids), 50):  # Process in batches of 50
+            end_i = min(i + 50, len(chunk_ids))
+            batch_ids = [f"{temp_id}_{j}" for j in range(i, end_i)]
+            
+            batch_metadatas = chunk_metadatas[i:end_i]
+            for meta in batch_metadatas:
+                meta["temp_upload"] = True
+                
             collection.add(
-                ids=chunk_ids[i:end_idx],
-                documents=chunk_texts[i:end_idx],
-                metadatas=chunk_metadatas[i:end_idx]
+                ids=batch_ids,
+                documents=chunk_texts[i:end_i],
+                metadatas=batch_metadatas
             )
         
-        logger.info(f"Stored {len(chunks)} chunks for document {document_id} with page numbers")
+        # Verify that everything was added successfully
+        temp_results = collection.get(
+            where={"temp_upload": True}
+        )
+        
+        if not temp_results or len(temp_results["ids"]) != len(chunk_ids):
+            logger.error(f"Failed to add all temporary chunks for document {document_id}")
+            # Clean up any temporary chunks that were added
+            collection.delete(where={"temp_upload": True})
+            return False
+        
+        # Now delete existing document chunks
+        existing_chunks = collection.get(
+            where={"document_id": document_id}
+        )
+        
+        if existing_chunks and existing_chunks["ids"]:
+            logger.info(f"Deleting {len(existing_chunks['ids'])} existing chunks for document {document_id}")
+            collection.delete(
+                where={"document_id": document_id}
+            )
+        
+        # Now add the real chunks (reusing the ones we already added)
+        for i, temp_id in enumerate(temp_results["ids"]):
+            # Update the metadata to remove the temp flag and use the real ID
+            collection.update(
+                ids=[temp_id],
+                metadatas=[{**chunk_metadatas[i], "temp_upload": None}]
+            )
+        
+        logger.info(f"Successfully stored {len(chunk_ids)} chunks for document {document_id}")
         return True
         
     except Exception as e:
-        logger.error(f"Error storing document chunks: {e}")
+        logger.error(f"Error storing document chunks: {str(e)}")
+        # Try to clean up any temporary chunks
+        try:
+            collection = get_or_create_collection(f"user_{user_id}_documents")
+            collection.delete(where={"temp_upload": True})
+        except Exception as cleanup_error:
+            logger.error(f"Error cleaning up temporary chunks: {str(cleanup_error)}")
         return False
 
 
-def search_documents(query, user_id="default_user", filters=None, n_results=5, include_metadata=True):
+def search_documents(query: str, user_id: str = "default_user", 
+                    filters: Optional[Dict[str, Any]] = None, 
+                    n_results: int = 5, 
+                    include_metadata: bool = True) -> List[Dict[str, Any]]:
     """
-    Sucht nach relevanten Dokumenten-Chunks basierend auf einer Anfrage
+    Search for relevant document chunks based on a query with caching
     
     Args:
-        query (str): Suchanfrage
-        user_id (str): ID des Benutzers
-        filters (dict): Filterkriterien (z.B. nur bestimmte Dokumente)
-        n_results (int): Anzahl der Ergebnisse
-        include_metadata (bool): Metadaten einschließen
+        query: Search query
+        user_id: User ID
+        filters: Filter criteria (e.g., specific documents)
+        n_results: Number of results
+        include_metadata: Include metadata
     
     Returns:
-        list: Liste der relevanten Chunks mit Seitenzahlen
+        list: List of relevant chunks with page numbers
     """
+    # Simple in-memory query cache (in a real system, use Redis or similar)
+    # Note: This is a module-level cache
+    if not hasattr(search_documents, '_cache'):
+        search_documents._cache = {}
+    
+    # Create cache key from all parameters
+    cache_key = f"{user_id}:{query}:{json.dumps(filters) if filters else 'None'}:{n_results}:{include_metadata}"
+    
+    # Check cache first
+    if cache_key in search_documents._cache:
+        cached_result = search_documents._cache[cache_key]
+        # Only use cache if result is less than 5 minutes old
+        if time.time() - cached_result['timestamp'] < 300:
+            logger.info(f"Using cached results for query '{query}'")
+            return cached_result['results']
+    
     try:
-        # Benutzer-spezifische Collection abrufen
+        # User-specific collection
         collection_name = f"user_{user_id}_documents"
         if collection_name not in [c.name for c in client.list_collections()]:
             logger.warning(f"Collection {collection_name} does not exist")
@@ -191,59 +314,62 @@ def search_documents(query, user_id="default_user", filters=None, n_results=5, i
         
         collection = client.get_collection(name=collection_name, embedding_function=ef)
         
-        # Where-Klausel für Filter erstellen
+        # Create where clause for filters
         where_clause = {}
         if filters:
             if 'document_ids' in filters and filters['document_ids']:
-                # Filter nach bestimmten Dokumenten
                 where_clause["document_id"] = {"$in": filters['document_ids']}
         
-        # Suche durchführen
+        # Make sure we don't include temporary uploads
+        where_clause["temp_upload"] = None
+        
+        # Perform the search
         results = collection.query(
             query_texts=[query],
             n_results=n_results,
-            where=where_clause if where_clause else None,
+            where=where_clause,
             include=["documents", "metadatas", "distances"] if include_metadata else ["documents"]
         )
         
-        # Ergebnisse formatieren
+        # Format results
         formatted_results = []
-        if results and results['documents'] and results['documents'][0]:
-            for i, doc in enumerate(results['documents'][0]):
+        if results and results["documents"] and results["documents"][0]:
+            for i, doc in enumerate(results["documents"][0]):
                 result_item = {
                     "text": doc,
                     "relevance": 1.0 - min(results['distances'][0][i] / 2.0, 0.99) if 'distances' in results else None
                 }
                 
-                # Metadaten hinzufügen
+                # Add metadata
                 if include_metadata and 'metadatas' in results and results['metadatas'][0]:
                     metadata = results['metadatas'][0][i]
                     
-                    # Autoren aus JSON-String parsen
+                    # Parse authors from JSON string
                     if 'authors' in metadata and metadata['authors']:
                         try:
                             authors = json.loads(metadata['authors'])
-                        except:
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to parse authors JSON: {metadata['authors']}")
                             authors = []
                     else:
                         authors = []
                     
-                    # Quelle formatieren
+                    # Format source citation
                     source = ""
                     if metadata.get('title'):
                         if authors and len(authors) > 0:
-                            # Ersten Autor mit et al. für mehrere Autoren
+                            # First author with et al. for multiple authors
                             if len(authors) == 1:
                                 author_text = authors[0].get('name', '')
                                 if ',' in author_text:
-                                    author_text = author_text.split(',')[0]
+                                    author_text = author_text.split(',')[0].strip()
                             else:
                                 first_author = authors[0].get('name', '')
                                 if ',' in first_author:
-                                    first_author = first_author.split(',')[0]
+                                    first_author = first_author.split(',')[0].strip()
                                 author_text = f"{first_author} et al."
                             
-                            # Jahr aus Datum extrahieren
+                            # Extract year from date
                             year = ""
                             if metadata.get('publication_date'):
                                 year_match = re.search(r'(\d{4})', metadata.get('publication_date', ''))
@@ -252,7 +378,7 @@ def search_documents(query, user_id="default_user", filters=None, n_results=5, i
                             
                             source = f"{author_text} ({year})"
                             
-                            # Seitenzahl hinzufügen, wenn vorhanden
+                            # Add page number if available
                             if metadata.get('page'):
                                 source += f", S. {metadata.get('page')}"
                         else:
@@ -264,47 +390,68 @@ def search_documents(query, user_id="default_user", filters=None, n_results=5, i
                 
                 formatted_results.append(result_item)
         
+        # Cache the results
+        search_documents._cache[cache_key] = {
+            'results': formatted_results,
+            'timestamp': time.time()
+        }
+        
+        # Limit cache size (keep most recent 100 queries)
+        if len(search_documents._cache) > 100:
+            oldest_key = min(search_documents._cache.keys(), 
+                            key=lambda k: search_documents._cache[k]['timestamp'])
+            search_documents._cache.pop(oldest_key)
+        
         logger.info(f"Query '{query}' returned {len(formatted_results)} results")
         return formatted_results
         
     except Exception as e:
-        logger.error(f"Error searching documents: {e}")
+        logger.error(f"Error searching documents: {str(e)}")
         return []
 
 
-def delete_document(document_id, user_id="default_user"):
+def delete_document(document_id: str, user_id: str = "default_user") -> bool:
     """
-    Löscht alle Chunks eines Dokuments
+    Delete all chunks of a document
     
     Args:
-        document_id (str): ID des zu löschenden Dokuments
-        user_id (str): ID des Benutzers
+        document_id: ID of the document to delete
+        user_id: User ID
     
     Returns:
-        bool: Erfolg der Löschung
+        bool: Success status
     """
     try:
         collection_name = f"user_{user_id}_documents"
         if collection_name not in [c.name for c in client.list_collections()]:
             logger.warning(f"Collection {collection_name} does not exist")
-            return True  # Nichts zu löschen
+            return True  # Nothing to delete
         
         collection = client.get_collection(name=collection_name, embedding_function=ef)
         
-        # IDs der zu löschenden Chunks finden
+        # Find IDs of chunks to delete
         results = collection.get(
             where={"document_id": document_id}
         )
         
         if results and results['ids']:
-            # Chunks löschen
-            collection.delete(ids=results['ids'])
+            # Delete chunks in batches to prevent timeouts
+            chunk_ids = results['ids']
+            for i in range(0, len(chunk_ids), 100):
+                batch_ids = chunk_ids[i:i+100]
+                collection.delete(ids=batch_ids)
+            
             logger.info(f"Deleted {len(results['ids'])} chunks for document {document_id}")
+            
+            # Clear any cached results that might include this document
+            if hasattr(search_documents, '_cache'):
+                search_documents._cache.clear()
+            
             return True
         else:
             logger.info(f"No chunks found for document {document_id}")
             return True
             
     except Exception as e:
-        logger.error(f"Error deleting document: {e}")
+        logger.error(f"Error deleting document: {str(e)}")
         return False

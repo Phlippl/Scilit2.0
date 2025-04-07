@@ -4,53 +4,63 @@ import re
 import logging
 import tempfile
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import time
 import pytesseract
 from PIL import Image
 import io
 import numpy as np
 import json
+from typing import Dict, List, Any, Optional, Union
 
-# PyMuPDF Importierung - direkt mit Fehlerbehandlung
+# PyMuPDF import with error handling
 try:
     import fitz  # PyMuPDF
 except ImportError:
-    raise ImportError("PyMuPDF nicht gefunden. Bitte installieren Sie es mit: pip install PyMuPDF")
+    raise ImportError("PyMuPDF not found. Please install it with: pip install PyMuPDF")
 
-# spaCy Importierung
+# spaCy import
 import spacy
 
 logger = logging.getLogger(__name__)
 
-# Prüfen, ob Spacy-Modell installiert ist und laden
+# Load appropriate spaCy model with fallbacks
 try:
     nlp = spacy.load("de_core_news_sm")
-    logger.info("Spacy model loaded: de_core_news_sm")
+    logger.info("Loaded spaCy model: de_core_news_sm")
 except OSError:
     try:
         nlp = spacy.load("en_core_web_sm")
-        logger.info("Spacy model loaded: en_core_web_sm")
+        logger.info("Loaded spaCy model: en_core_web_sm")
     except OSError:
-        logger.warning("No spacy language model found. Using blank model.")
+        logger.warning("No spaCy language model found. Using blank model.")
         nlp = spacy.blank("en")
 
+
 class PDFProcessor:
-    """Klasse zur Verarbeitung von PDF-Dateien"""
+    """Class for processing PDF files with improved performance and error handling"""
     
-    @staticmethod
-    def extract_text_from_pdf(pdf_file, max_pages=0, perform_ocr=False):
+    def __init__(self):
+        # Create thread pool for parallel processing
+        self.executor = ThreadPoolExecutor(max_workers=4)
+        # Create OCR process pool (Tesseract is CPU intensive)
+        self.ocr_executor = ThreadPoolExecutor(max_workers=2)
+    
+    def extract_text_from_pdf(self, pdf_file, max_pages=0, perform_ocr=False, progress_callback=None):
         """
-        Extrahiert Text aus einer PDF-Datei mit verbesserter Seitenverfolgung
+        Extract text from a PDF file with improved page tracking and parallel OCR
         
         Args:
-            pdf_file: PDF-Datei (Dateipfad oder Bytes)
-            max_pages: Maximale Anzahl zu verarbeitender Seiten (0 = alle)
-            perform_ocr: OCR für Seiten mit wenig Text durchführen
+            pdf_file: PDF file (file path or bytes)
+            max_pages: Maximum number of pages to process (0 = all)
+            perform_ocr: Perform OCR for pages with little text
+            progress_callback: Optional callback function for progress updates
         
         Returns:
-            dict: Ergebnis mit Text und detaillierten Seiteninfos
+            dict: Result with text and detailed page info
         """
         try:
-            # Temporäre Datei für Bytes-Input erstellen
+            # Create temporary file for bytes input
             if isinstance(pdf_file, bytes):
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
                 temp_file.write(pdf_file)
@@ -59,10 +69,10 @@ class PDFProcessor:
             else:
                 pdf_path = pdf_file
             
-            # PDF öffnen
+            # Open PDF
             doc = fitz.open(pdf_path)
             
-            # Ergebnisobjekt vorbereiten
+            # Prepare result object
             result = {
                 'text': '',
                 'pages': [],
@@ -70,130 +80,158 @@ class PDFProcessor:
                 'processedPages': min(len(doc), max_pages) if max_pages > 0 else len(doc)
             }
             
-            # Anzahl zu verarbeitender Seiten berechnen
+            # Number of pages to process
             pages_to_process = result['processedPages']
             
-            # Seitenliste für OCR (Seiten mit wenig Text)
+            # List for OCR candidate pages (pages with little text)
             ocr_page_numbers = []
             
-            # Text aus jeder Seite extrahieren
+            # Extract text from each page
             for i in range(pages_to_process):
                 page = doc[i]
                 
-                # Seitenmetadaten mit Seitenzahl
+                # Report progress
+                if progress_callback:
+                    progress_callback(f"Processing page {i+1}/{pages_to_process}", 
+                                     int(i/pages_to_process * 100))
+                
+                # Page metadata with page number
                 page_info = {
                     'pageNumber': i + 1,
                     'width': page.rect.width,
                     'height': page.rect.height,
                     'text': '',
-                    'startPosition': len(result['text']), # Start-Position im Gesamttext
+                    'startPosition': len(result['text']), # Start position in total text
                 }
                 
-                # Text extrahieren
+                # Extract text
                 page_text = page.get_text()
                 page_info['text'] = page_text
                 page_info['length'] = len(page_text)
                 
-                # Zum Gesamttext hinzufügen
+                # Add to total text
                 result['text'] += page_text + ' '
                 
-                # Endposition aktualisieren
+                # Update end position
                 page_info['endPosition'] = len(result['text']) - 1
                 
-                # Prüfen, ob die Seite wenig Text enthält -> OCR-Kandidat
+                # Check if page has little text -> OCR candidate
                 if perform_ocr and len(page_text.strip()) < 100:
                     ocr_page_numbers.append(i)
                 
                 result['pages'].append(page_info)
             
-            # OCR für Seiten mit wenig Text durchführen
+            # Perform OCR for pages with little text using thread pool
             if perform_ocr and ocr_page_numbers:
-                ocr_results = PDFProcessor.perform_ocr_on_pages(doc, ocr_page_numbers)
+                if progress_callback:
+                    progress_callback(f"Performing OCR on {len(ocr_page_numbers)} pages", 50)
                 
-                # OCR-Ergebnisse den Seiten hinzufügen
+                # Prepare list of pages for OCR
+                ocr_tasks = [(doc, page_num, 300) for page_num in ocr_page_numbers]
+                
+                # Process OCR in parallel using thread pool
+                ocr_results_futures = []
+                for task in ocr_tasks:
+                    future = self.ocr_executor.submit(self._perform_ocr_on_page, *task)
+                    ocr_results_futures.append(future)
+                
+                # Collect OCR results
+                ocr_results = {}
+                for i, future in enumerate(ocr_results_futures):
+                    try:
+                        page_num, ocr_text = future.result()
+                        ocr_results[page_num] = ocr_text
+                        
+                        # Report progress
+                        if progress_callback:
+                            progress_callback(f"OCR processing: {i+1}/{len(ocr_results_futures)}", 
+                                             50 + int((i+1)/len(ocr_results_futures) * 45))
+                    except Exception as e:
+                        logger.error(f"Error in OCR process: {e}")
+                
+                # Add OCR results to pages
                 for page_num, ocr_text in ocr_results.items():
-                    # Original-Seitennummer (1-basiert) in Listenindex (0-basiert) umwandeln
+                    # Convert from 0-based to 1-based page number for index
                     idx = page_num - 1
                     if idx < len(result['pages']):
-                        # Text aktualisieren oder hinzufügen
+                        # Update text or add OCR result
                         orig_text = result['pages'][idx]['text']
                         if not orig_text.strip():
                             result['pages'][idx]['text'] = ocr_text
-                            # Gesamttext aktualisieren
+                            # Update total text
                             result['text'] = result['text'].replace(orig_text, ocr_text)
                         else:
-                            # Text hinzufügen, wenn bereits Text vorhanden ist
+                            # Add text if original exists
                             result['pages'][idx]['text'] += ' ' + ocr_text
                             result['text'] += ' ' + ocr_text
             
-            # Aufräumen
+            # Clean up
             doc.close()
             if isinstance(pdf_file, bytes) and os.path.exists(pdf_path):
                 os.unlink(pdf_path)
+            
+            # Final progress report
+            if progress_callback:
+                progress_callback("Text extraction complete", 100)
             
             return result
         
         except Exception as e:
             logger.error(f"Error extracting text from PDF: {e}")
-            # Aufräumen bei Fehler
+            # Clean up on error
             if isinstance(pdf_file, bytes) and 'pdf_path' in locals() and os.path.exists(pdf_path):
                 os.unlink(pdf_path)
             raise
     
     @staticmethod
-    def perform_ocr_on_pages(doc, page_numbers, dpi=300):
+    def _perform_ocr_on_page(doc, page_idx, dpi=300):
         """
-        Führt OCR für bestimmte Seiten durch
+        Perform OCR on a single page
         
         Args:
-            doc: Geöffnetes PyMuPDF-Dokument
-            page_numbers: Liste der Seitennummern (0-basiert) für OCR
-            dpi: DPI für Rendering
+            doc: Open PyMuPDF document
+            page_idx: Page index (0-based)
+            dpi: DPI for rendering
         
         Returns:
-            dict: Ergebnisse als {seitennummer: text}
+            tuple: (page_number, ocr_text)
         """
-        results = {}
-        
         try:
-            for page_idx in page_numbers:
-                if page_idx < 0 or page_idx >= len(doc):
-                    continue
-                
-                # Seite rendern
-                page = doc[page_idx]
-                pix = page.get_pixmap(matrix=fitz.Matrix(dpi/72, dpi/72))
-                
-                # Als Bild speichern
-                img_data = pix.tobytes("png")
-                img = Image.open(io.BytesIO(img_data))
-                
-                # OCR durchführen
-                ocr_text = pytesseract.image_to_string(img)
-                
-                # Seitennummer (1-basiert) für das Ergebnis
-                results[page_idx + 1] = ocr_text
-        
+            if page_idx < 0 or page_idx >= len(doc):
+                return page_idx + 1, ""
+            
+            # Render page
+            page = doc[page_idx]
+            pix = page.get_pixmap(matrix=fitz.Matrix(dpi/72, dpi/72))
+            
+            # Save as image
+            img_data = pix.tobytes("png")
+            img = Image.open(io.BytesIO(img_data))
+            
+            # Perform OCR
+            ocr_text = pytesseract.image_to_string(img)
+            
+            # Page number (1-based) for the result
+            return page_idx + 1, ocr_text
         except Exception as e:
-            logger.error(f"Error performing OCR: {e}")
-        
-        return results
+            logger.error(f"Error performing OCR on page {page_idx + 1}: {e}")
+            return page_idx + 1, ""
     
     @staticmethod
     def extract_doi(text):
         """
-        Extrahiert DOI aus Text mittels Regex
+        Extract DOI from text using regex
         
         Args:
-            text: Text, in dem nach DOI gesucht werden soll
+            text: Text to search for DOI
         
         Returns:
-            str: Gefundene DOI oder None
+            str: Found DOI or None
         """
         if not text:
             return None
         
-        # DOI-Muster (verbessert für bessere Übereinstimmung)
+        # DOI patterns (improved for better matching)
         # Format: 10.XXXX/XXXXX
         doi_patterns = [
             r'\b(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)\b',
@@ -211,18 +249,18 @@ class PDFProcessor:
     @staticmethod
     def extract_isbn(text):
         """
-        Extrahiert ISBN aus Text mittels Regex
+        Extract ISBN from text using regex
         
         Args:
-            text: Text, in dem nach ISBN gesucht werden soll
+            text: Text to search for ISBN
         
         Returns:
-            str: Gefundene ISBN oder None
+            str: Found ISBN or None
         """
         if not text:
             return None
         
-        # ISBN-10 und ISBN-13 Muster
+        # ISBN patterns for ISBN-10 and ISBN-13
         isbn_patterns = [
             r'\bISBN(?:-13)?[:\s]*(97[89][- ]?(?:\d[- ]?){9}\d)\b',  # ISBN-13
             r'\bISBN(?:-10)?[:\s]*(\d[- ]?(?:\d[- ]?){8}[\dX])\b',   # ISBN-10
@@ -233,33 +271,32 @@ class PDFProcessor:
         for pattern in isbn_patterns:
             matches = re.search(pattern, text, re.IGNORECASE)
             if matches and matches.group(1):
-                # Bindestriche und Leerzeichen entfernen
+                # Remove hyphens and spaces
                 return matches.group(1).replace('-', '').replace(' ', '')
         
         return None
     
-    @staticmethod
-    def chunk_text_with_pages(text, pages_info, chunk_size=1000, overlap_size=200):
+    def chunk_text_with_pages(self, text, pages_info, chunk_size=1000, overlap_size=200):
         """
-        Teilt Text in Chunks mit Seitenzuordnung und Überlappung
+        Split text into chunks with page tracking and overlap
         
         Args:
-            text: Vollständiger Text
-            pages_info: Liste mit Seiteninformationen inkl. Start- und Endposition
-            chunk_size: Zielgröße der Chunks in Zeichen
-            overlap_size: Überlappungsgröße in Zeichen
+            text: Full text
+            pages_info: List with page information including start and end positions
+            chunk_size: Target chunk size in characters
+            overlap_size: Overlap size in characters
         
         Returns:
-            list: Liste von Textchunks mit Seitenzuordnung
+            list: List of text chunks with page assignments
         """
         if not text or chunk_size <= 0:
             return []
         
         chunks = []
         
-        # Falls Text kleiner als chunk_size ist, als einzelnen Chunk zurückgeben
+        # If text is smaller than chunk_size, return as single chunk
         if len(text) <= chunk_size:
-            # Bestimme Seitennummer
+            # Determine page number
             page_number = None
             for page in pages_info:
                 if 0 >= page['startPosition'] and len(text) <= page['endPosition']:
@@ -268,35 +305,35 @@ class PDFProcessor:
             
             return [{'text': text, 'page_number': page_number or 1}]
         
-        # Erstelle eine Map von Textposition zu Seitenzahl
+        # Create mapping from text position to page number
         pos_to_page = {}
         for page in pages_info:
             for pos in range(page['startPosition'], page['endPosition'] + 1):
                 pos_to_page[pos] = page['pageNumber']
         
-        # Text in semantisch sinnvolle Chunks aufteilen
-        semantic_chunks = PDFProcessor.chunk_text_semantic(text, chunk_size, overlap_size)
+        # Split text into semantically meaningful chunks
+        semantic_chunks = self.chunk_text_semantic(text, chunk_size, overlap_size)
         
-        # Für jeden Chunk die Seitennummer bestimmen
+        # For each chunk, determine the page number
         current_pos = 0
         for chunk in semantic_chunks:
-            # Position des Chunks im Originaltext bestimmen
+            # Find position of chunk in original text
             chunk_start = text.find(chunk, current_pos)
             if chunk_start == -1:
-                # Fallback, wenn exakte Position nicht gefunden wird
+                # Fallback if exact position not found
                 chunk_start = current_pos
             
             chunk_end = min(chunk_start + len(chunk), len(text) - 1)
             current_pos = chunk_end - overlap_size if overlap_size > 0 else chunk_end
             
-            # Seitenzählung für diesen Chunk
+            # Count pages for this chunk
             page_counts = {}
             for pos in range(chunk_start, chunk_end + 1):
                 if pos in pos_to_page:
                     page_number = pos_to_page[pos]
                     page_counts[page_number] = page_counts.get(page_number, 0) + 1
             
-            # Häufigste Seitennummer für diesen Chunk
+            # Most frequent page number for this chunk
             most_common_page = None
             max_count = 0
             for page_num, count in page_counts.items():
@@ -314,41 +351,41 @@ class PDFProcessor:
     @staticmethod
     def chunk_text(text, chunk_size=1000, overlap_size=200):
         """
-        Teilt Text in kleinere Chunks mit konfigurierbarer Größe und Überlappung
+        Split text into smaller chunks with configurable size and overlap
         
         Args:
-            text: Text zum Chunken
-            chunk_size: Zielgröße der Chunks in Zeichen
-            overlap_size: Überlappungsgröße in Zeichen
+            text: Text to chunk
+            chunk_size: Target chunk size in characters
+            overlap_size: Overlap size in characters
         
         Returns:
-            list: Liste von Textchunks
+            list: List of text chunks
         """
         if not text or chunk_size <= 0:
             return []
         
         chunks = []
         
-        # Falls Text kleiner als chunk_size ist, als einzelnen Chunk zurückgeben
+        # If text is smaller than chunk_size, return as single chunk
         if len(text) <= chunk_size:
             return [text]
         
         start_index = 0
         
         while start_index < len(text):
-            # Ende-Index basierend auf Chunkgröße berechnen
+            # Calculate end index based on chunk size
             end_index = min(start_index + chunk_size, len(text))
             
-            # Natürlichen Breakpoint finden
+            # Find natural breakpoint
             if end_index < len(text):
-                # Suche nach Absatzende oder Satzende innerhalb eines Bereichs um den End-Index
+                # Look for paragraph end or sentence end within range around end_index
                 search_start = max(0, end_index - 100)
                 search_end = min(len(text), end_index + 100)
                 
                 paragraph_end = text.find('\n\n', search_start, search_end)
                 sentence_end = -1
                 
-                # Suche nach Satzende (Punkt gefolgt von Leerzeichen oder Zeilenumbruch)
+                # Look for sentence end (period followed by space or newline)
                 for punct in ['. ', '.\n', '! ', '!\n', '? ', '?\n']:
                     search_start = max(0, end_index - 50)
                     search_end = min(len(text), end_index + 50)
@@ -356,120 +393,119 @@ class PDFProcessor:
                     if pos != -1 and (sentence_end == -1 or pos < sentence_end):
                         sentence_end = pos + len(punct) - 1
                 
-                # Verwende den nächstgelegenen natürlichen Breakpoint
+                # Use the nearest natural breakpoint
                 if paragraph_end != -1 and (sentence_end == -1 or abs(paragraph_end - end_index) < abs(sentence_end - end_index)):
-                    end_index = paragraph_end + 2  # +2 für '\n\n'
+                    end_index = paragraph_end + 2  # +2 for '\n\n'
                 elif sentence_end != -1:
-                    end_index = sentence_end + 1  # +1 für Leerzeichen nach Punkt
+                    end_index = sentence_end + 1  # +1 for space after period
             
-            # Chunk extrahieren
+            # Extract chunk
             chunk = text[start_index:end_index]
             chunks.append(chunk)
             
-            # Start-Index für nächsten Chunk berechnen (mit Überlappung)
+            # Calculate start index for next chunk (with overlap)
             start_index = end_index - overlap_size
             
-            # Sicherstellen, dass wir nicht rückwärts gehen
+            # Ensure we don't go backwards
             if start_index <= 0 or start_index >= end_index:
                 start_index = end_index
         
         return chunks
     
-    @staticmethod
-    def chunk_text_semantic(text, chunk_size=1000, overlap_size=200):
+    def chunk_text_semantic(self, text, chunk_size=1000, overlap_size=200):
         """
-        Teilt Text in semantisch sinnvolle Chunks mit spaCy
+        Split text into semantically meaningful chunks using spaCy
         
         Args:
-            text: Text zum Chunken
-            chunk_size: Zielgröße der Chunks in Zeichen
-            overlap_size: Überlappungsgröße in Zeichen
+            text: Text to chunk
+            chunk_size: Target chunk size in characters
+            overlap_size: Overlap size in characters
         
         Returns:
-            list: Liste von Textchunks
+            list: List of text chunks
         """
         if not text or chunk_size <= 0:
             return []
         
         chunks = []
         
-        # Falls Text kleiner als chunk_size ist, als einzelnen Chunk zurückgeben
+        # If text is smaller than chunk_size, return as single chunk
         if len(text) <= chunk_size:
             return [text]
         
         try:
-            # Text in Absätze aufteilen
+            # Split text into paragraphs
             paragraphs = re.split(r'\n\s*\n', text)
             
             current_chunk = []
             current_size = 0
             
             for paragraph in paragraphs:
-                # Größe des aktuellen Absatzes
+                # Size of current paragraph
                 para_size = len(paragraph)
                 
-                # Wenn der Absatz allein schon größer als chunk_size ist, unterteilen
+                # If paragraph alone is larger than chunk_size, subdivide
                 if para_size > chunk_size:
-                    # Wenn wir schon etwas im aktuellen Chunk haben, diesen erst speichern
+                    # If we already have something in current chunk, save it first
                     if current_size > 0:
                         chunks.append(' '.join(current_chunk))
                         current_chunk = []
                         current_size = 0
                     
-                    # Großen Absatz in Sätze aufteilen
+                    # Split large paragraph into sentences using spaCy
                     doc = nlp(paragraph)
                     sentences = [sent.text for sent in doc.sents]
                     
-                    # Sätze zu Chunks zusammenfügen
+                    # Combine sentences into chunks
                     sentence_chunk = []
                     sentence_size = 0
                     
                     for sentence in sentences:
                         sent_size = len(sentence)
                         
-                        # Prüfen, ob der Satz in den aktuellen Chunk passt
+                        # Check if sentence fits in current chunk
                         if sentence_size + sent_size <= chunk_size:
                             sentence_chunk.append(sentence)
                             sentence_size += sent_size
                         else:
-                            # Aktuellen Satz-Chunk speichern, wenn nicht leer
+                            # Save current sentence chunk if not empty
                             if sentence_size > 0:
                                 chunks.append(' '.join(sentence_chunk))
                             
-                            # Falls der Satz selbst zu groß ist, direkt speichern
+                            # If sentence itself is too large, chunk it directly
                             if sent_size > chunk_size:
                                 chunks.extend(PDFProcessor.chunk_text(sentence, chunk_size, overlap_size))
                             else:
-                                # Neuen Chunk mit aktuellem Satz beginnen
+                                # Start new chunk with current sentence
                                 sentence_chunk = [sentence]
                                 sentence_size = sent_size
                     
-                    # Restlichen Satz-Chunk speichern, wenn vorhanden
+                    # Save remaining sentence chunk if exists
                     if sentence_chunk:
                         chunks.append(' '.join(sentence_chunk))
                 
-                # Normaler Fall: Absatz passt potenziell in einen Chunk
+                # Normal case: Paragraph potentially fits in a chunk
                 elif current_size + para_size <= chunk_size:
                     current_chunk.append(paragraph)
                     current_size += para_size
                 else:
-                    # Aktuellen Chunk abschließen und neuen beginnen
+                    # Finish current chunk and start new one
                     chunks.append(' '.join(current_chunk))
                     current_chunk = [paragraph]
                     current_size = para_size
             
-            # Letzten Chunk hinzufügen, falls vorhanden
+            # Add last chunk if exists
             if current_chunk:
                 chunks.append(' '.join(current_chunk))
             
-            # Überlappung hinzufügen, wenn benötigt
+            # Add overlap if needed
             if overlap_size > 0 and len(chunks) > 1:
                 chunks_with_overlap = [chunks[0]]
                 for i in range(1, len(chunks)):
                     prev_chunk = chunks[i-1]
                     curr_chunk = chunks[i]
                     
-                    # Überlappung hinzufügen
+                    # Add overlap
                     if len(prev_chunk) >= overlap_size:
                         overlap_text = prev_chunk[-overlap_size:]
                         chunks_with_overlap.append(overlap_text + curr_chunk)
@@ -482,20 +518,20 @@ class PDFProcessor:
         
         except Exception as e:
             logger.error(f"Error in semantic chunking: {e}")
-            # Fallback zur einfachen Chunking-Methode
+            # Fallback to simpler chunking method
             return PDFProcessor.chunk_text(text, chunk_size, overlap_size)
-        
-    @staticmethod
-    def process_file(file_path, settings=None):
+    
+    def process_file(self, file_path, settings=None, progress_callback=None):
         """
-        Verarbeitet eine PDF-Datei vollständig: Extraktion, Chunking, Metadaten
+        Process a PDF file completely: extraction, chunking, metadata
         
         Args:
-            file_path: Pfad zur PDF-Datei
-            settings: Verarbeitungseinstellungen (max_pages, chunk_size, etc.)
+            file_path: Path to PDF file
+            settings: Processing settings (max_pages, chunk_size, etc.)
+            progress_callback: Optional callback function for progress updates
         
         Returns:
-            dict: Ergebnis mit Text, Chunks, Metadaten und Seitenzuordnung
+            dict: Result with text, chunks, metadata and page assignments
         """
         if settings is None:
             settings = {
@@ -505,25 +541,52 @@ class PDFProcessor:
                 'performOCR': False
             }
         
-        # Text extrahieren
-        extraction_result = PDFProcessor.extract_text_from_pdf(
+        # Define a progress wrapper to divide progress across stages
+        def progress_wrapper(stage, progress_func=None):
+            if not progress_callback:
+                return lambda msg, pct: None
+            
+            if stage == 'extraction':
+                return lambda msg, pct: progress_callback(msg, pct * 0.6)
+            elif stage == 'chunking':
+                return lambda msg, pct: progress_callback(msg, 60 + pct * 0.3)
+            elif stage == 'metadata':
+                return lambda msg, pct: progress_callback(msg, 90 + pct * 0.1)
+            else:
+                return progress_callback
+        
+        # Extract text with progress reporting
+        extraction_result = self.extract_text_from_pdf(
             file_path, 
             max_pages=settings.get('maxPages', 0),
-            perform_ocr=settings.get('performOCR', False)
+            perform_ocr=settings.get('performOCR', False),
+            progress_callback=progress_wrapper('extraction')
         )
         
-        # Extrahiere DOI, ISBN
-        extracted_text = extraction_result['text']
-        doi = PDFProcessor.extract_doi(extracted_text)
-        isbn = PDFProcessor.extract_isbn(extracted_text)
+        # Progress update
+        if progress_callback:
+            progress_callback("Extracting metadata", 60)
         
-        # Chunks mit Seitenzuordnung erstellen
-        chunks_with_pages = PDFProcessor.chunk_text_with_pages(
+        # Extract DOI, ISBN
+        extracted_text = extraction_result['text']
+        doi = self.extract_doi(extracted_text)
+        isbn = self.extract_isbn(extracted_text)
+        
+        # Progress update
+        if progress_callback:
+            progress_callback("Creating chunks with page tracking", 65)
+        
+        # Create chunks with page tracking
+        chunks_with_pages = self.chunk_text_with_pages(
             extracted_text,
             extraction_result['pages'],
             chunk_size=settings.get('chunkSize', 1000),
             overlap_size=settings.get('chunkOverlap', 200)
         )
+        
+        # Progress update
+        if progress_callback:
+            progress_callback("Processing complete", 100)
         
         return {
             'text': extracted_text,
