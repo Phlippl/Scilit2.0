@@ -479,6 +479,14 @@ def process_pdf_background(filepath, document_id, metadata, settings):
                 except Exception as write_err:
                     logger.error(f"Error saving error metadata for {document_id}: {write_err}")
             
+            # Hilfsfunktion für direkten Cleanup ohne Executor hinzufügen
+            def cleanup_status_direct(doc_id):
+                """Cleanup function that works without executor"""
+                with processing_status_lock:
+                    if doc_id in processing_status:
+                        del processing_status[doc_id]
+                        logger.info(f"Cleaned up status for document {doc_id} via direct method")
+
             # Clean up status after 10 minutes
             def cleanup_status():
                 time.sleep(600)  # 10 minutes
@@ -486,7 +494,18 @@ def process_pdf_background(filepath, document_id, metadata, settings):
                     if document_id in processing_status:
                         del processing_status[document_id]
             
-            executor.submit(cleanup_status)
+            try:
+                if not executor._shutdown:  # Prüfen, ob der Executor noch aktiv ist
+                    executor.submit(cleanup_status)
+                else:
+                    # Alternative: Timer verwenden, wenn Executor bereits heruntergefahren ist
+                    import threading
+                    cleanup_timer = threading.Timer(600, lambda: cleanup_status_direct(document_id))
+                    cleanup_timer.daemon = True  # Daemon-Thread wird beendet, wenn das Hauptprogramm endet
+                    cleanup_timer.start()
+                    logger.info(f"Using Timer instead of Executor for cleanup of document {document_id}")
+            except Exception as e:
+                logger.warning(f"Could not schedule cleanup for document {document_id}: {e}")
             
         except Exception as e:
             logger.error(f"Error in background processing for document {document_id}: {str(e)}", exc_info=True)

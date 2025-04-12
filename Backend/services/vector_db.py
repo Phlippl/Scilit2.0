@@ -37,10 +37,26 @@ try:
     if EMBEDDING_FUNCTION_NAME == 'ollama' and OllamaEmbeddingFunction is not None:
         ollama_url = os.environ.get('OLLAMA_API_URL', 'http://localhost:11434')
         ollama_model = os.environ.get('OLLAMA_MODEL', 'llama3')
+        
+        # Dimension explizit setzen, basierend auf dem Modell
+        fallback_dimension = 384  # Default für die meisten Basis-Modelle
+        
+        # Modellspezifische Dimensionen
+        model_dimensions = {
+            'llama3': 4096,
+            'mistral': 1024,
+            'nomic-embed-text': 768,
+            'orca': 3072
+        }
+        
+        # Setze die richtige Dimension für das Modell
+        model_dim = model_dimensions.get(ollama_model, fallback_dimension)
+        logger.info(f"Using dimension {model_dim} for model {ollama_model}")
+        
         ef = OllamaEmbeddingFunction(
             base_url=ollama_url, 
             model=ollama_model,
-            fallback_dimension=3072  # Appropriate for Llama3
+            fallback_dimension=model_dim
         )
         logger.info(f"Using Ollama embedding function with model {ollama_model}")
     elif EMBEDDING_FUNCTION_NAME == 'openai' and OPENAI_API_KEY:
@@ -139,7 +155,24 @@ def get_or_create_collection(collection_name: str):
             # Check if collection already exists
             collections = client.list_collections()
             if collection_name in [c.name for c in collections]:
-                return client.get_collection(name=collection_name, embedding_function=ef)
+                coll = client.get_collection(name=collection_name, embedding_function=ef)
+                
+                # Spezieller Fix für den Dimensions-Mismatch
+                try:
+                    # Versuche eine kleine Abfrage um die Dimensionen zu überprüfen
+                    test_result = coll.query(query_texts=["test"], n_results=1)
+                    logger.info(f"Collection {collection_name} accessed successfully")
+                    return coll
+                except Exception as e:
+                    if "dimension" in str(e).lower():
+                        # Bei Dimensions-Fehler die Sammlung löschen und neu erstellen
+                        logger.warning(f"Dimension mismatch in collection {collection_name}, recreating...")
+                        client.delete_collection(collection_name)
+                        # Collection neu erstellen mit aktuellem Embedding-Modell
+                        return client.create_collection(name=collection_name, embedding_function=ef)
+                    else:
+                        # Andere Fehler weitergeben
+                        raise
             else:
                 # Create new collection
                 return client.create_collection(name=collection_name, embedding_function=ef)
