@@ -94,8 +94,8 @@ const DashboardPage = () => {
         <NoDocuments />
       ) : (
         <Grid container spacing={3}>
-          {documents.map((document) => (
-            <Grid item xs={12} sm={6} md={4} key={document.id}>
+          {Array.isArray(documents) && documents.map((document) => (
+            <Grid item xs={12} sm={6} md={4} key={document.id || `doc-${index}`}>
               <DocumentCard 
                 document={document}
                 onDelete={() => handleDeleteClick(document)}

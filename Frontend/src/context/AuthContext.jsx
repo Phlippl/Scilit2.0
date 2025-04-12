@@ -22,6 +22,28 @@ export const AuthProvider = ({ children }) => {
   const testUserName = import.meta.env.VITE_TEST_USER_NAME;
 
   /**
+   * Handle logout
+   * 
+   * @param {boolean} callApi - Flag to call the logout API
+   */
+  const handleLogout = useCallback(async (callApi = true) => {
+    if (callApi) {
+      try {
+        await authApi.logout();
+      } catch (err) {
+        console.error('Logout error:', err);
+      }
+    }
+    
+    // Clean up regardless of API success
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('user_data');
+    delete apiClient.defaults.headers.common.Authorization;
+    setUser(null);
+    setIsAuthenticated(false);
+  }, []);
+
+  /**
    * Check authentication status on first load
    */
   useEffect(() => {
@@ -68,7 +90,38 @@ export const AuthProvider = ({ children }) => {
     return () => {
       window.removeEventListener('auth:error', handleAuthError);
     };
-  }, []);
+  }, [handleLogout]);
+
+  /**
+   * Refresh token method - attempts to get a new token using the existing one
+   */
+  const refreshToken = useCallback(async () => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) return null;
+    
+    try {
+      setLoading(true);
+      const response = await authApi.refreshToken();
+      
+      // Update token and user data
+      localStorage.setItem('auth_token', response.token);
+      localStorage.setItem('user_data', JSON.stringify(response.user));
+      
+      // Update axios header for subsequent requests
+      apiClient.defaults.headers.common.Authorization = `Bearer ${response.token}`;
+      
+      setUser(response.user);
+      setIsAuthenticated(true);
+      
+      return response.user;
+    } catch (err) {
+      console.error('Token refresh failed:', err);
+      handleLogout(false); // Logout on refresh failure
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, [handleLogout]);
 
   /**
    * Handle login
@@ -172,28 +225,6 @@ export const AuthProvider = ({ children }) => {
   }, [handleLogin, testUserEnabled, testUserEmail]);
 
   /**
-   * Handle logout
-   * 
-   * @param {boolean} callApi - Flag to call the logout API
-   */
-  const handleLogout = useCallback(async (callApi = true) => {
-    if (callApi) {
-      try {
-        await authApi.logout();
-      } catch (err) {
-        console.error('Logout error:', err);
-      }
-    }
-    
-    // Clean up regardless of API success
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user_data');
-    delete apiClient.defaults.headers.common.Authorization;
-    setUser(null);
-    setIsAuthenticated(false);
-  }, []);
-  
-  /**
    * Update user data
    */
   const updateUserData = useCallback((newUserData) => {
@@ -213,6 +244,7 @@ export const AuthProvider = ({ children }) => {
     login: handleLogin,
     register: handleRegister,
     logout: handleLogout,
+    refreshToken, // Neue Methode hinzufügen
     updateUserData
   };
 

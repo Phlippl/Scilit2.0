@@ -61,6 +61,51 @@ def register():
         "token": token
     }), 201
 
+@auth_bp.route('/refresh', methods=['POST'])
+def refresh_token():
+    """Token aktualisieren ohne komplette Neuanmeldung"""
+    # Prüfen, ob ein Token vorhanden ist
+    auth_header = request.headers.get('Authorization')
+    
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({"error": "Token erforderlich"}), 401
+    
+    token = auth_header.split(' ')[1]
+    
+    try:
+        # Token dekodieren, auch wenn abgelaufen
+        secret_key = current_app.config['SECRET_KEY']
+        
+        # Wichtig: Wir ignorieren das Ablaufdatum, um den Benutzer zu identifizieren
+        payload = jwt.decode(token, secret_key, algorithms=['HS256'], options={"verify_exp": False})
+        
+        # Prüfen, ob der Benutzer noch existiert
+        user = user_service.get_user_by_email(payload['email'])
+        
+        if not user:
+            return jsonify({"error": "Benutzer nicht gefunden"}), 404
+        
+        # Neues Token erstellen
+        new_token = jwt.encode({
+            'sub': user['id'],
+            'email': user['email'],
+            'name': user['name'],
+            # Länger gültigen Token erstellen (7 Tage)
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(days=7)
+        }, secret_key, algorithm='HS256')
+        
+        # Token decodieren und überprüfen
+        if isinstance(new_token, bytes):
+            new_token = new_token.decode('utf-8')
+        
+        return jsonify({
+            "token": new_token,
+            "user": user
+        })
+        
+    except jwt.InvalidTokenError:
+        return jsonify({"error": "Ungültiger Token"}), 401
+
 @auth_bp.route('/login', methods=['POST'])
 def login():
     """Benutzer anmelden"""

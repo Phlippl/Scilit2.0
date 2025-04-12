@@ -66,3 +66,17 @@ export const getCurrentUser = async () => {
     throw error.response?.data || { message: 'Failed to get user data' };
   }
 };
+
+/**
+ * Aktualisiert ein abgelaufenes Token
+ * 
+ * @returns {Promise<Object>} Neues Token und Benutzerdaten
+ */
+export const refreshToken = async () => {
+  try {
+    const response = await apiClient.post(`${AUTH_ENDPOINT}/refresh`);
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { message: 'Token-Aktualisierung fehlgeschlagen' };
+  }
+};
