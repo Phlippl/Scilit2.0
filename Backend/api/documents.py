@@ -37,14 +37,23 @@ pdf_processor = PDFProcessor()
 # Thread pool for background processing
 #executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
+# Thread pool for background processing
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
 def get_executor():
+    """
+    Gibt den Thread-Pool-Executor zurück, erstellt ihn neu, wenn nötig
+    
+    Returns:
+        ThreadPoolExecutor: Der Thread-Pool-Executor für Hintergrundaufgaben
+    """
     global executor
     try:
-        # Prüfe, ob der Executor noch funktioniert
+        # Prüfen, ob der Executor noch funktioniert
         executor.submit(lambda: None).result(timeout=0.1)
         return executor
     except Exception as e:
-        # Wenn Executor nicht funktioniert oder geschlossen wurde, erstelle einen neuen
+        # Wenn Executor nicht funktioniert oder geschlossen wurde, einen neuen erstellen
         logger.info(f"Erstelle neuen Executor wegen: {str(e)}")
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         return executor

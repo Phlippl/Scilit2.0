@@ -17,9 +17,9 @@ export const AuthProvider = ({ children }) => {
 
   // Test user config from environment variables
   const testUserEnabled = import.meta.env.VITE_TEST_USER_ENABLED === 'true';
-  const testUserEmail = import.meta.env.VITE_TEST_USER_EMAIL;
-  const testUserPassword = import.meta.env.VITE_TEST_USER_PASSWORD;
-  const testUserName = import.meta.env.VITE_TEST_USER_NAME;
+  const testUserEmail = import.meta.env.VITE_TEST_USER_EMAIL || '';
+  const testUserPassword = import.meta.env.VITE_TEST_USER_PASSWORD || '';
+  const testUserName = import.meta.env.VITE_TEST_USER_NAME || 'Test User';
 
   /**
    * Handle logout
@@ -42,55 +42,6 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     setIsAuthenticated(false);
   }, []);
-
-  /**
-   * Check authentication status on first load
-   */
-  useEffect(() => {
-    const checkAuthStatus = async () => {
-      try {
-        // Get token from localStorage
-        const token = localStorage.getItem('auth_token');
-        
-        if (token) {
-          // Ensure we have default headers set properly
-          apiClient.defaults.headers.common.Authorization = `Bearer ${token}`;
-          
-          // Get user data
-          const userData = JSON.parse(localStorage.getItem('user_data') || 'null');
-          
-          if (userData) {
-            setUser(userData);
-            setIsAuthenticated(true);
-            setLoading(false);
-          } else {
-            // Clear potentially invalid auth data
-            handleLogout(false);
-            setLoading(false);
-          }
-        } else {
-          setLoading(false);
-        }
-      } catch (err) {
-        console.error('Auth check error:', err);
-        handleLogout(false);
-        setLoading(false);
-      }
-    };
-  
-    checkAuthStatus();
-    
-    // Listener for auth errors (e.g., 401 from other API requests)
-    const handleAuthError = (e) => {
-      handleLogout(false);
-    };
-    
-    window.addEventListener('auth:error', handleAuthError);
-    
-    return () => {
-      window.removeEventListener('auth:error', handleAuthError);
-    };
-  }, [handleLogout]);
 
   /**
    * Refresh token method - attempts to get a new token using the existing one
@@ -122,6 +73,68 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
     }
   }, [handleLogout]);
+
+  /**
+   * Check authentication status on first load and set up listeners
+   */
+  useEffect(() => {
+    const checkAuthStatus = async () => {
+      try {
+        // Get token from localStorage
+        const token = localStorage.getItem('auth_token');
+        
+        if (token) {
+          // Ensure we have default headers set properly
+          apiClient.defaults.headers.common.Authorization = `Bearer ${token}`;
+          
+          // Get user data or try to refresh token if needed
+          try {
+            const userData = JSON.parse(localStorage.getItem('user_data') || 'null');
+            
+            if (userData) {
+              setUser(userData);
+              setIsAuthenticated(true);
+            } else {
+              // Try to refresh token if we have token but no user data
+              const refreshedUser = await refreshToken();
+              if (!refreshedUser) {
+                handleLogout(false);
+              }
+            }
+          } catch (e) {
+            console.error('Error parsing user data:', e);
+            // Try to refresh token if we had an error
+            const refreshedUser = await refreshToken();
+            if (!refreshedUser) {
+              handleLogout(false);
+            }
+          }
+        } else {
+          // No token, ensure logged out state
+          handleLogout(false);
+        }
+      } catch (err) {
+        console.error('Auth check error:', err);
+        handleLogout(false);
+      } finally {
+        setLoading(false);
+      }
+    };
+  
+    checkAuthStatus();
+    
+    // Listener for auth errors (e.g., 401 from other API requests)
+    const handleAuthError = (e) => {
+      console.log('Auth error event received', e);
+      handleLogout(false);
+    };
+    
+    window.addEventListener('auth:error', handleAuthError);
+    
+    return () => {
+      window.removeEventListener('auth:error', handleAuthError);
+    };
+  }, [handleLogout, refreshToken]);
 
   /**
    * Handle login
@@ -244,7 +257,7 @@ export const AuthProvider = ({ children }) => {
     login: handleLogin,
     register: handleRegister,
     logout: handleLogout,
-    refreshToken, // Neue Methode hinzufügen
+    refreshToken,
     updateUserData
   };
 

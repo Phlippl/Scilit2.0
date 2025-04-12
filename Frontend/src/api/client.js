@@ -49,7 +49,7 @@ apiClient.interceptors.request.use(
     }
     
     // Debugging: Log outgoing requests
-    console.log(`Request: ${config.method.toUpperCase()} ${config.url}`);
+    console.log(`Request: ${config.method?.toUpperCase() || 'UNKNOWN'} ${config.url}`);
     
     return config;
   },
@@ -109,11 +109,16 @@ apiClient.interceptors.response.use(
           }
           
           // Anfrage zum Token-Refresh
-          const response = await axios.post('/api/auth/refresh', {}, {
+          const response = await axios.post(`${apiClient.defaults.baseURL}/auth/refresh`, {}, {
             headers: {
               Authorization: `Bearer ${token}`
             }
           });
+          
+          // Prüfe, ob die Antwort ein neues Token enthält
+          if (!response.data || !response.data.token) {
+            throw new Error("Ungültige Antwort vom Server");
+          }
           
           // Speichere neuen Token
           const newToken = response.data.token;
@@ -125,7 +130,7 @@ apiClient.interceptors.response.use(
           }
           
           // Setze neuen Token für alle weiteren Anfragen
-          apiClient.defaults.headers.Authorization = `Bearer ${newToken}`;
+          apiClient.defaults.headers.common.Authorization = `Bearer ${newToken}`;
           
           // Benachrichtige alle wartenden Anfragen
           onTokenRefreshed(newToken);
