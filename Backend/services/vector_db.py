@@ -5,8 +5,37 @@ import os
 import uuid
 import logging
 from typing import List, Dict, Any
+import json
 
 logger = logging.getLogger(__name__)
+
+def _safe_str(value):
+    if isinstance(value, list):
+        return value[0] if value else ""
+    if isinstance(value, dict):
+        return json.dumps(value)
+    return str(value) if value is not None else ""
+
+def _sanitize_metadata(raw: Dict[str, Any], page_number: int, citation: str) -> Dict[str, str]:
+    """Wandelt alle Metadatenfelder in Strings um, normalisiert Autoren und fügt Zitierdaten hinzu"""
+    sanitized = {}
+
+    for key, value in raw.items():
+        if key == "authors":
+            if isinstance(value, list):
+                sanitized[key] = ", ".join([
+                    v.get("name") if isinstance(v, dict) else str(v)
+                    for v in value
+                ])
+            else:
+                sanitized[key] = _safe_str(value)
+        else:
+            sanitized[key] = _safe_str(value)
+
+    sanitized["page_number"] = str(page_number)
+    sanitized["citation"] = citation
+    return sanitized
+
 
 # Starte Chroma-Client
 CHROMA_PATH = os.environ.get("CHROMA_DB_DIR", "./chromadb")
@@ -26,15 +55,27 @@ def get_or_create_collection(collection_name: str):
 
 def format_authors_for_citation(authors):
     if isinstance(authors, list):
-        if len(authors) == 0:
+        names = []
+        for author in authors:
+            name = None
+            if isinstance(author, dict):
+                name = author.get("name")
+            elif isinstance(author, str):
+                name = author
+            if isinstance(name, list):
+                name = name[0]
+            if isinstance(name, str):
+                names.append(name.split(',')[0])
+        if not names:
             return "o. V."
-        elif len(authors) == 1:
-            return authors[0].split(',')[0]  # Nachname
+        elif len(names) == 1:
+            return names[0]
         else:
-            return authors[0].split(',')[0] + " et al."
+            return names[0] + " et al."
     elif isinstance(authors, str):
         return authors.split(',')[0]
     return "o. V."
+
 
 
 def store_document_chunks(document_id: str, chunks: List[Dict[str, Any]], metadata: Dict[str, Any]):
@@ -61,18 +102,16 @@ def store_document_chunks(document_id: str, chunks: List[Dict[str, Any]], metada
 
         page_number = chunk.get("page_number", 1)
 
-        # Zitier-Infos für spätere Anzeige erzeugen
         authors = metadata.get("authors", [])
         citation_author = format_authors_for_citation(authors)
         citation_year = metadata.get("publicationDate", "n.d.")[:4]
         citation = f"{citation_author} {citation_year}, S. {page_number}"
 
-        full_metadata = {
+        base_metadata = {
             "user_id": user_id,
             "document_id": document_id,
-            "page_number": page_number,
             "title": metadata.get("title", ""),
-            "authors": authors,
+            "authors": metadata.get("authors", []),
             "type": metadata.get("type", "article"),
             "publicationDate": metadata.get("publicationDate", ""),
             "journal": metadata.get("journal", ""),
@@ -81,9 +120,10 @@ def store_document_chunks(document_id: str, chunks: List[Dict[str, Any]], metada
             "isbn": metadata.get("isbn", ""),
             "volume": metadata.get("volume", ""),
             "issue": metadata.get("issue", ""),
-            "pages": metadata.get("pages", ""),
-            "citation": citation  # Für direkte Anzeige im Chat
+            "pages": metadata.get("pages", "")
         }
+
+        full_metadata = _sanitize_metadata(base_metadata, page_number, citation)
 
         documents.append(text)
         metadatas.append(full_metadata)

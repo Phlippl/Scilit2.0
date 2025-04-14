@@ -216,7 +216,8 @@ const FileUpload = () => {
   const [processingComplete, setProcessingComplete] = useState(false);
   const [processingFailed, setProcessingFailed] = useState(false);
   const statusIntervalRef = useRef(null);
-  
+  const statusCheckCount = useRef(0); 
+
   // Fehlerbehandlung
   const [processingError, setProcessingError] = useState(null);
   
@@ -247,6 +248,8 @@ const FileUpload = () => {
     'Metadaten prüfen', 
     'In Datenbank speichern'
   ];
+
+  
 
   // Authentication check
   useEffect(() => {

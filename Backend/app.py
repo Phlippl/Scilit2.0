@@ -231,40 +231,28 @@ def create_app():
     # Shutdown hook to clean up resources
     @app.teardown_appcontext
     def teardown_resources(exception):
-        # Graceful shutdown for all Thread Pools
         try:
             logger.info("Shutting down resources...")
-            
-            # Zugriff auf den Executor mit Importprüfung
+
+            # Background executor direkt beenden
             try:
-                from api.documents import get_executor
-                executor = get_executor()
-                if hasattr(executor, 'shutdown'):
-                    executor.shutdown(wait=False)
-                    logger.info("Documents executor shut down successfully")
-            except (ImportError, AttributeError) as e:
-                logger.error(f"Error accessing document executor: {e}")
-                
-            # Hintergrund-Executor
-            try:
-                if 'background_executor' in globals() and background_executor is not None:
-                    if hasattr(background_executor, 'shutdown'):
-                        background_executor.shutdown(wait=False)
-                        logger.info("Background executor shut down successfully")
+                if background_executor is not None and hasattr(background_executor, 'shutdown'):
+                    background_executor.shutdown(wait=False)
+                    logger.info("Background executor shut down successfully")
             except Exception as e:
                 logger.error(f"Error shutting down background executor: {e}")
-                
-            # Resource monitor stoppen
+
+            # Resource Monitor stoppen
             try:
-                if 'resource_monitor' in globals() and resource_monitor is not None:
-                    if hasattr(resource_monitor, 'stop'):
-                        resource_monitor.stop()
-                        logger.info("Resource monitor stopped successfully")
+                if hasattr(resource_monitor, 'stop'):
+                    resource_monitor.stop()
+                    logger.info("Resource monitor stopped successfully")
             except Exception as e:
                 logger.error(f"Error stopping resource monitor: {e}")
-                
+
         except Exception as e:
             logger.error(f"Error during teardown: {e}")
+
     
     return app
 
