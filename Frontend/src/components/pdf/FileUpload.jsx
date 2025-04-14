@@ -574,8 +574,15 @@ const FileUpload = () => {
         };
       });
       
-      // Prepare document data with enhanced page tracking
+      // Flache Datenstruktur für die wichtigsten Metadaten erstellen
+      // Frontend-Fix: Stelle sicher, dass Metadaten direkt im Root-Objekt liegen
       const documentData = {
+        // Wichtige Felder direkt im Root setzen
+        title: metadata.title.trim(), // Stellen Sie sicher, dass der Titel getrimmt wird
+        type: metadata.type || 'article',
+        authors: metadata.authors || [],
+        
+        // Rest der Metadaten in metadata-Objekt
         metadata: {
           ...metadata,
           // Format dates properly
@@ -597,6 +604,12 @@ const FileUpload = () => {
         chunkOverlap: settings.chunkOverlap
       };
   
+      // Debug: Zeige Daten, die gesendet werden
+      console.log("Sending document data:", JSON.stringify({
+        title: documentData.title,
+        type: documentData.type
+      }));
+  
       // Save document and file to the server
       const savedDoc = await documentsApi.saveDocument(documentData, file);
       
@@ -610,8 +623,6 @@ const FileUpload = () => {
       setProcessingStage('Verarbeitungsfortschritt überprüfen...');
       setProcessingProgress(0);
       
-      // Update UI to indicate we're waiting for background processing
-      // saveSuccess will be set by the status polling when processing is actually complete
     } catch (error) {
       console.error('Error saving document:', error);
       // Show more specific error message

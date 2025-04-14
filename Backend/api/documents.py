@@ -648,6 +648,9 @@ def validate_metadata(metadata):
     if not isinstance(metadata, dict):
         return False, "Metadata must be a dictionary"
     
+    # Debugging output
+    print(f"Validating metadata: {metadata}")
+    
     # Required fields validation
     required_fields = ['title', 'type']
     for field in required_fields:
@@ -730,6 +733,10 @@ def validate_metadata(metadata):
 def save_document():
     """Upload und Verarbeitung eines neuen Dokuments mit verbesserter Validierung"""
     try:
+        # Debugging
+        print("Request form data:", request.form)
+        print("Request files:", request.files)
+        
         # Prüfen, ob Datei oder Metadaten vorhanden sind
         if 'file' not in request.files and not request.form.get('data'):
             return jsonify({"error": "Keine Datei oder Daten bereitgestellt"}), 400
@@ -739,6 +746,24 @@ def save_document():
         if 'data' in request.form:
             try:
                 metadata = json.loads(request.form.get('data', '{}'))
+                
+                # Prüfe, ob title direkt im request.form vorhanden ist (Fix)
+                if 'title' in request.form and request.form['title']:
+                    metadata['title'] = request.form['title']
+                
+                # Prüfe, ob type direkt im request.form vorhanden ist (Fix)
+                if 'type' in request.form and request.form['type']:
+                    metadata['type'] = request.form['type']
+                
+                # Prüfe, ob authors direkt im request.form vorhanden ist (Fix)
+                if 'authors' in request.form and request.form['authors']:
+                    try:
+                        metadata['authors'] = json.loads(request.form['authors'])
+                    except:
+                        pass  # Ignoriere Fehler beim authors-Parsing
+                
+                # Debugging
+                print("Parsed metadata:", metadata)
             except json.JSONDecodeError:
                 return jsonify({"error": "Ungültige JSON-Daten"}), 400
         

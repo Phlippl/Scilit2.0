@@ -132,6 +132,15 @@ export const saveDocument = async (documentData, file = null) => {
       const formData = new FormData();
       formData.append('file', file);
       
+      // Stelle sicher, dass wichtige Metadatenfelder direkt im FormData liegen
+      formData.append('title', documentData.title || '');
+      formData.append('type', documentData.type || 'article');
+      
+      // Füge Authors als JSON-String hinzu wenn vorhanden
+      if (documentData.authors && documentData.authors.length > 0) {
+        formData.append('authors', JSON.stringify(documentData.authors));
+      }
+      
       // Add documentData as JSON string
       formData.append('data', JSON.stringify(documentData));
       
@@ -143,7 +152,7 @@ export const saveDocument = async (documentData, file = null) => {
     }
     
     // Debug-Log
-    console.log('Saving document with data:', JSON.stringify(documentData).substring(0, 100) + '...');
+    console.log('Saving document with title:', documentData.title);
     console.log('File included:', !!file);
     
     const response = await apiClient.post(DOCUMENTS_ENDPOINT, data, { headers });

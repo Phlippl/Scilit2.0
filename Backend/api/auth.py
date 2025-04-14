@@ -133,7 +133,7 @@ def login():
         'sub': user['id'],
         'email': user['email'],
         'name': user['name'],
-        'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(days=7)
     }, secret_key, algorithm='HS256')
     
     # Token decodieren und überprüfen
