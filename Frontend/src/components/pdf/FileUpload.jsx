@@ -1007,3 +1007,597 @@ const FileUpload = () => {
 };
 
 export default FileUpload;
+
+/*
+// src/components/pdf/FileUpload.jsx
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Box, Button, Paper, Typography, Alert, Snackbar, Stepper, Step, StepLabel, Grid } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../hooks/useAuth';
+
+// Subkomponenten importieren
+import UploadArea from './upload/UploadArea';
+import ProcessingStep from './upload/ProcessingStep';
+import MetadataStep from './upload/MetadataStep';
+import SaveStep from './upload/SaveStep';
+import SettingsDialog from './upload/SettingsDialog';
+import ProcessingErrorDialog from './upload/ProcessingErrorDialog';
+
+// Services
+import * as documentsApi from '../../api/documents';
+import { formatToISODate } from '../../utils/dateFormatter';
+
+// Container-Komponente für Vollbild-Ansicht
+const FullWidthContainer = ({ children }) => (
+  <Box
+    sx={{
+      position: 'relative',
+      width: '90vw',
+      left: '50%',
+      right: '50%',
+      marginLeft: '-45vw',
+      marginRight: '-45vw',
+      boxSizing: 'border-box',
+      px: { xs: 6, sm: 8 },
+      py: 2,
+    }}
+  >
+    {children}
+  </Box>
+);
+
+const FileUpload = () => {
+  const { isAuthenticated } = useAuth();
+  const navigate = useNavigate();
+  const statusCheckCount = useRef(0);
+  
+  // Datei-Status
+  const [file, setFile] = useState(null);
+  const [fileName, setFileName] = useState('');
+  
+  // Verarbeitungs-Status
+  const [processing, setProcessing] = useState(false);
+  const [processingStage, setProcessingStage] = useState('');
+  const [processingProgress, setProcessingProgress] = useState(0);
+  const [currentStep, setCurrentStep] = useState(0);
+  
+  // Dokument-Tracking-Status
+  const [documentId, setDocumentId] = useState(null);
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+  const [processingComplete, setProcessingComplete] = useState(false);
+  const [processingFailed, setProcessingFailed] = useState(false);
+  const statusIntervalRef = useRef(null);
+  
+  // Fehlerbehandlung
+  const [processingError, setProcessingError] = useState(null);
+  
+  // Verarbeitungseinstellungen
+  const [settings, setSettings] = useState({
+    maxPages: 0,
+    chunkSize: 1000,
+    chunkOverlap: 200,
+    performOCR: false
+  });
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // Ergebnisse
+  const [extractedText, setExtractedText] = useState('');
+  const [extractedIdentifiers, setExtractedIdentifiers] = useState({ doi: null, isbn: null });
+  const [chunks, setChunks] = useState([]);
+  const [metadata, setMetadata] = useState(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  
+  // Fehler
+  const [error, setError] = useState('');
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  
+  // Verarbeitungsschritte
+  const steps = [
+    'PDF hochladen', 
+    'Dokument verarbeiten', 
+    'Metadaten prüfen', 
+    'In Datenbank speichern'
+  ];
+
+  // Authentifizierung prüfen
+  useEffect(() => {
+    if (!isAuthenticated) {
+      navigate('/login', { state: { from: '/upload' } });
+    }
+  }, [isAuthenticated, navigate]);
+  
+  // Status-Polling beim Unmount aufräumen
+  useEffect(() => {
+    return () => {
+      if (statusIntervalRef.current) {
+        clearInterval(statusIntervalRef.current);
+      }
+    };
+  }, []);
+  
+  // Dokument-Status abfragen wenn documentId gesetzt ist
+  useEffect(() => {
+    if (documentId && currentStep === 3 && !processingComplete && !processingFailed) {
+      // Start polling status
+      if (!statusIntervalRef.current) {
+        setIsCheckingStatus(true);
+        checkDocumentStatus(documentId);
+        
+        statusIntervalRef.current = setInterval(() => {
+          checkDocumentStatus(documentId);
+        }, 5000); // Check every 5 seconds
+      }
+    } else if (processingComplete || processingFailed) {
+      // Stop polling when processing is complete or failed
+      if (statusIntervalRef.current) {
+        clearInterval(statusIntervalRef.current);
+        statusIntervalRef.current = null;
+        setIsCheckingStatus(false);
+      }
+    }
+    
+    return () => {
+      if (statusIntervalRef.current) {
+        clearInterval(statusIntervalRef.current);
+      }
+    };
+  }, [documentId, currentStep, processingComplete, processingFailed]);
+  
+  // Überwachungsfunktion für lang laufende Prozesse hinzufügen
+  useEffect(() => {
+    let processingTimer = null;
+    
+    if (processing) {
+      // Timeout setzen, um zu verhindern, dass die UI im Verarbeitungsstatus stecken bleibt
+      processingTimer = setTimeout(() => {
+        if (processing) {
+          setProcessing(false);
+          setProcessingError("Die Verarbeitung hat zu lange gedauert. Die Operation läuft möglicherweise noch im Hintergrund, aber die Benutzeroberfläche wurde entsperrt.");
+        }
+      }, 600000); // 10 minutes
+    }
+    
+    return () => {
+      if (processingTimer) {
+        clearTimeout(processingTimer);
+      }
+    };
+  }, [processing]);
+  
+  /**
+   * Dokument-Verarbeitungsstatus prüfen
+   */ /*
+  const checkDocumentStatus = async (id) => {
+    try {
+      // Zähler für Abfrageversuche
+      if (!statusCheckCount.current) statusCheckCount.current = 0;
+      statusCheckCount.current++;
+      
+      // Nach 20 Versuchen (ca. 1 Minute) automatisch abbrechen
+      if (statusCheckCount.current > 20) {
+        setProcessingError("Zeitüberschreitung bei der Dokumentverarbeitung.");
+        if (statusIntervalRef.current) {
+          clearInterval(statusIntervalRef.current);
+          statusIntervalRef.current = null;
+        }
+        return;
+      }
+      
+      const response = await documentsApi.getDocumentStatus(id);
+      
+      // Prüfen, ob Verarbeitung abgeschlossen
+      if (response.status === 'completed') {
+        setProcessingProgress(100);
+        setProcessingStage('Verarbeitung abgeschlossen');
+        setProcessingComplete(true);
+        setIsCheckingStatus(false);
+        setSaveSuccess(true);
+        
+        // Polling stoppen
+        if (statusIntervalRef.current) {
+          clearInterval(statusIntervalRef.current);
+          statusIntervalRef.current = null;
+        }
+      } 
+      // Prüfen, ob Verarbeitung noch läuft
+      else if (response.status === 'processing') {
+        setProcessingProgress(response.progress || 0);
+        setProcessingStage(response.message || 'Verarbeitung läuft...');
+      }
+      // Prüfen, ob Verarbeitung fehlgeschlagen
+      else if (response.status === 'error') {
+        setProcessingFailed(true);
+        setError(response.message || 'Fehler bei der Verarbeitung');
+        setSnackbarOpen(true);
+        setIsCheckingStatus(false);
+        
+        // Polling stoppen
+        if (statusIntervalRef.current) {
+          clearInterval(statusIntervalRef.current);
+          statusIntervalRef.current = null;
+        }
+      }
+    } catch (error) {
+      console.error('Error checking document status:', error);
+      // Don't stop polling on network errors - it might be temporary
+    }
+  };
+  
+  /**
+   * Dateiauswahl verarbeiten
+   */ /*
+  const handleFileChange = (selectedFile) => {
+    if (selectedFile && selectedFile.type === 'application/pdf') {
+      setFile(selectedFile);
+      setFileName(selectedFile.name);
+      // Status für neuen Upload zurücksetzen
+      resetUploadState();
+    } else {
+      setError('Bitte wähle eine gültige PDF-Datei aus');
+      setSnackbarOpen(true);
+    }
+  };
+  
+  /**
+   * Upload-Status zurücksetzen
+   */ /*
+  const resetUploadState = () => {
+    setMetadata(null);
+    setExtractedIdentifiers({ doi: null, isbn: null });
+    setExtractedText('');
+    setChunks([]);
+    setError('');
+    setCurrentStep(0); // Zurück zum ersten Schritt
+    setSaveSuccess(false);
+    setProcessingComplete(false);
+    setProcessingFailed(false);
+    setDocumentId(null);
+    setProcessingError(null);
+    
+    // Alle existierenden Status-Intervalle löschen
+    if (statusIntervalRef.current) {
+      clearInterval(statusIntervalRef.current);
+      statusIntervalRef.current = null;
+    }
+  };
+  
+  /**
+   * Verarbeitungseinstellungen aktualisieren
+   */ /*
+  const handleSettingsChange = (newSettings) => {
+    setSettings(newSettings);
+  };
+  
+  /**
+   * Metadaten-Änderungen verarbeiten
+   */ /*
+  const handleMetadataChange = (field, value) => {
+    // Datumsfelder in ISO-Format konvertieren
+    let formattedValue = value;
+    if (field === 'publicationDate' || field === 'date' || 
+        field === 'conferenceDate' || field === 'lastUpdated' || 
+        field === 'accessDate') {
+      formattedValue = formatToISODate(value);
+    }
+
+    setMetadata(prev => ({
+      ...prev,
+      [field]: formattedValue,
+    }));
+  };
+  
+  /**
+   * Nach erfolgreicher Speicherung zum Dashboard gehen
+   */ /*
+  const goToDashboard = () => {
+    navigate('/dashboard');
+  };
+  
+  /**
+   * PDF-Datei verarbeiten
+   */ /*
+  const processFile = useCallback(async (uploadedFile) => {
+    if (!uploadedFile) {
+      setError('Bitte wähle zuerst eine Datei aus');
+      setSnackbarOpen(true);
+      return;
+    }
+
+    setProcessing(true);
+    setCurrentStep(1); // Move to processing step
+    
+    // Alle vorherigen Fehler zurücksetzen
+    setProcessingError(null);
+    
+    try {
+      // Process PDF file and create metadata through backend services
+      // This would be a call to the API, passing file and settings
+      const formData = new FormData();
+      formData.append('file', uploadedFile);
+      
+      // Add settings to the request
+      const requestData = {
+        maxPages: settings.maxPages,
+        performOCR: settings.performOCR,
+        chunkSize: settings.chunkSize,
+        chunkOverlap: settings.chunkOverlap
+      };
+      
+      formData.append('data', JSON.stringify(requestData));
+      
+      // Start PDF processing
+      const response = await documentsApi.startProcessing(formData);
+      
+      // Store results
+      setDocumentId(response.document_id);
+      setExtractedText(response.text || '');
+      setChunks(response.chunks || []);
+      setExtractedIdentifiers({
+        doi: response.metadata?.doi || null,
+        isbn: response.metadata?.isbn || null
+      });
+      
+      // If metadata was returned, use it
+      if (response.metadata) {
+        setMetadata(response.metadata);
+      } else {
+        // Create empty metadata structure
+        setMetadata({
+          title: '',
+          authors: [],
+          publicationDate: '',
+          publisher: '',
+          journal: '',
+          doi: response.doi || '',
+          isbn: response.isbn || '',
+          abstract: '',
+          type: 'other' // Default document type
+        });
+      }
+      
+      setProcessingStage('Verarbeitung abgeschlossen');
+      setProcessingProgress(100);
+      
+      // Move to next step
+      setCurrentStep(2);
+    } catch (error) {
+      console.error('Error processing file:', error);
+      setProcessingError(`Fehler bei der Dateiverarbeitung: ${error.message}`);
+      setCurrentStep(0); // Back to upload step
+    } finally {
+      setProcessing(false);
+    }
+  }, [settings]);
+  
+  /**
+   * Dokument in Datenbank speichern
+   */ /*
+  const saveToDatabase = async () => {
+    if (!metadata || !metadata.title) {
+      setError('Titel ist erforderlich');
+      setSnackbarOpen(true);
+      return;
+    }
+  
+    setProcessing(true);
+    setProcessingStage('Speichere in Datenbank...');
+    setCurrentStep(3); // Move to saving step
+    
+    try {
+      // Make sure all chunks have page numbers
+      const chunksWithPages = chunks.map(chunk => {
+        // If chunk is already properly formatted with page_number
+        if (typeof chunk === 'object' && chunk.hasOwnProperty('text') && chunk.hasOwnProperty('page_number')) {
+          return chunk;
+        }
+        
+        // If it's just a text string, try to guess the page (fallback to page 1)
+        return {
+          text: typeof chunk === 'string' ? chunk : chunk.text || '',
+          page_number: chunk.page_number || 1
+        };
+      });
+      
+      // Flache Datenstruktur für die wichtigsten Metadaten erstellen
+      const documentData = {
+        // Wichtige Felder direkt im Root setzen
+        title: metadata.title.trim(),
+        type: metadata.type || 'article',
+        authors: metadata.authors || [],
+        
+        // Rest der Metadaten im metadata-Objekt
+        metadata: {
+          ...metadata,
+          // Dates properly format
+          publicationDate: formatToISODate(metadata.publicationDate) || new Date().toISOString().split('T')[0],
+          date: metadata.date ? formatToISODate(metadata.date) : undefined,
+          conferenceDate: metadata.conferenceDate ? formatToISODate(metadata.conferenceDate) : undefined,
+          lastUpdated: metadata.lastUpdated ? formatToISODate(metadata.lastUpdated) : undefined,
+          accessDate: metadata.accessDate ? formatToISODate(metadata.accessDate) : undefined
+        },
+        text: extractedText,
+        chunks: chunksWithPages,
+        fileName: fileName,
+        fileSize: file.size,
+        uploadDate: new Date().toISOString(),
+        // Processing settings
+        maxPages: settings.maxPages,
+        performOCR: settings.performOCR,
+        chunkSize: settings.chunkSize,
+        chunkOverlap: settings.chunkOverlap
+      };
+  
+      // Save document and file to the server
+      const savedDoc = await documentsApi.saveDocument(documentData, file);
+      
+      console.log("Document saved with ID:", savedDoc.document_id);
+      
+      // Save the document ID for status checking
+      setDocumentId(savedDoc.document_id || savedDoc.id);
+      
+      // Note: We do NOT immediately set saveSuccess here
+      // Instead, we'll check the processing status before showing success
+      setProcessingStage('Verarbeitungsfortschritt überprüfen...');
+      setProcessingProgress(0);
+      
+    } catch (error) {
+      console.error('Error saving document:', error);
+      let errorMsg = "Error saving document: ";
+      if (error.response && error.response.data && error.response.data.error) {
+        errorMsg += error.response.data.error;
+      } else if (error.message) {
+        errorMsg += error.message;
+      } else {
+        errorMsg += "Unknown error";
+      }
+      setError(errorMsg);
+      setSnackbarOpen(true);
+      setProcessingFailed(true);
+    }
+  };
+  
+  /**
+   * Inhalt basierend auf aktuellem Schritt rendern
+   */ /*
+  const renderStepContent = () => {
+    switch (currentStep) {
+      case 0: // Upload step
+        return (
+          <UploadArea 
+            file={file}
+            fileName={fileName}
+            onFileChange={handleFileChange}
+            onProcess={() => processFile(file)}
+            onOpenSettings={() => setShowSettings(true)}
+            processing={processing}
+          />
+        );
+        
+      case 1: // Processing step
+        return (
+          <ProcessingStep 
+            fileName={fileName}
+            processingStage={processingStage}
+            processingProgress={processingProgress}
+            extractedIdentifiers={extractedIdentifiers}
+            chunks={chunks}
+          />
+        );
+        
+      case 2: // Metadata step
+        return (
+          <MetadataStep 
+            metadata={metadata}
+            file={file}
+            onMetadataChange={handleMetadataChange}
+            onSave={saveToDatabase}
+            processing={processing}
+          />
+        );
+      
+      case 3: // Saving/success step
+        return (
+          <SaveStep 
+            isCheckingStatus={isCheckingStatus}
+            processingFailed={processingFailed}
+            saveSuccess={saveSuccess}
+            processingComplete={processingComplete}
+            error={error}
+            processingStage={processingStage}
+            processingProgress={processingProgress}
+            onGoToDashboard={goToDashboard}
+            onRetry={() => setCurrentStep(0)}
+          />
+        );
+        
+      default:
+        return null;
+    }
+  };
+  
+  // Render the complete component
+  return (
+    <FullWidthContainer>
+      <Box sx={{ maxWidth: '100%', overflowX: 'hidden' }}>
+        <Paper
+          elevation={3}
+          sx={{
+            width: '100%',
+            p: { xs: 3, md: 4 },
+            mb: 4,
+            mx: 'auto',
+            maxWidth: 1500
+          }}
+        >
+          {/* Main heading centered */ /*}
+          <Typography 
+            variant="h5" 
+            component="h2" 
+            gutterBottom 
+            align="center" 
+            sx={{ mb: 3 }}
+          >
+            Wissenschaftliche Publikation hochladen
+          </Typography>
+          
+          {/* Stepper */ /*} 
+          <Stepper 
+            activeStep={currentStep} 
+            alternativeLabel 
+            sx={{ width: '100%', mb: 4 }}
+          >
+            {steps.map((label) => (
+              <Step key={label}>
+                <StepLabel>{label}</StepLabel>
+              </Step>
+            ))}
+          </Stepper>
+          
+          {/* Step content *//*} /*
+          <Box sx={{ width: '100%' }}>
+            {renderStepContent()}
+          </Box>
+        </Paper>
+        
+        {/* Settings dialog *//*}   /*
+        <SettingsDialog
+          open={showSettings}
+          settings={settings}
+          onClose={() => setShowSettings(false)}
+          onChange={handleSettingsChange}
+        />
+        
+        {/* Processing error dialog *//*} /*
+        {processingError && (
+          <ProcessingErrorDialog
+            open={!!processingError}
+            error={processingError}
+            processingStage={processingStage}
+            onClose={() => setProcessingError(null)}
+            onRetry={() => {
+              setProcessingError(null);
+              processFile(file);
+            }}
+            onChangeSettings={() => {
+              setProcessingError(null);
+              setShowSettings(true);
+            }}
+          />
+        )}
+        
+        {/* Error snackbar *//*} /*
+        <Snackbar
+          open={snackbarOpen}
+          autoHideDuration={6000}
+          onClose={() => setSnackbarOpen(false)}
+        >
+          <Alert onClose={() => setSnackbarOpen(false)} severity="error">
+            {error}
+          </Alert>
+        </Snackbar>
+      </Box>
+    </FullWidthContainer>
+  );
+};
+
+export default FileUpload; */
