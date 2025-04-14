@@ -1,6 +1,7 @@
 // src/api/documents.js
 import apiClient from './client';
 import mockService from '../utils/mockService';
+import axios from 'axios';
 
 const DOCUMENTS_ENDPOINT = '/documents';
 
@@ -83,8 +84,15 @@ export const getDocumentStatus = async (id) => {
     }
     
     console.error(`Fehler beim Abrufen des Dokumentstatus für ID ${id}:`, error);
-    throw error.response?.data || {
-      message: 'Dokumentstatus konnte nicht abgerufen werden'
+    const errorMessage = error.response?.data?.error || 
+                         error.response?.data?.message || 
+                         error.message || 
+                         'Unbekannter Fehler';
+                         
+    throw {
+      status: "error",
+      message: errorMessage,
+      details: error.response?.data
     };
   }
 };

@@ -1,4 +1,3 @@
-# Backend/services/pdf_processor.py
 import os
 import re
 import logging
@@ -72,6 +71,31 @@ class PDFProcessor:
         """Cleanup thread pools on deletion"""
         self.executor.shutdown(wait=False)
         self.ocr_executor.shutdown(wait=False)
+    
+    def validate_pdf(self, filepath):
+        """Validate PDF format with improved error handling"""
+        try:
+            # Check if file exists
+            if not os.path.exists(filepath):
+                return False, "PDF file not found"
+                
+            # Check header bytes
+            with open(filepath, 'rb') as f:
+                header = f.read(5)
+                if header != b'%PDF-':
+                    return False, "Invalid PDF file format (incorrect header)"
+            
+            # Try opening with PyMuPDF
+            try:
+                doc = fitz.open(filepath)
+                page_count = len(doc)
+                doc.close()
+                return True, page_count
+            except Exception as e:
+                return False, f"Could not open PDF with PyMuPDF: {str(e)}"
+                
+        except Exception as e:
+            return False, str(e)
     
     def extract_text_from_pdf(self, pdf_file, max_pages=0, perform_ocr=False, progress_callback=None):
         """
@@ -736,15 +760,9 @@ class PDFProcessor:
                         progress_callback(f"Large file ({file_size_mb:.1f} MB). Processing may take longer.", 0)
             
             # Validate PDF format
-            try:
-                if isinstance(file_path, str) and os.path.exists(file_path):
-                    with open(file_path, 'rb') as f:
-                        header = f.read(5)
-                        if header != b'%PDF-':
-                            raise ValueError("Invalid PDF file format.")
-            except Exception as e:
-                logger.error(f"PDF validation error: {e}")
-                raise ValueError(f"Invalid or corrupted PDF file: {str(e)}")
+            valid, message = self.validate_pdf(file_path)
+            if not valid:
+                raise ValueError(f"Invalid PDF: {message}")
             
             # Progress wrapper
             def progress_wrapper(stage, progress_func=None):

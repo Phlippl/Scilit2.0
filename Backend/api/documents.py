@@ -331,10 +331,10 @@ def process_pdf_background(filepath, document_id, metadata, settings):
             try:
                 # Check if the file is a valid PDF
                 try:
-                    with open(filepath, 'rb') as f:
-                        header = f.read(5)
-                        if header != b'%PDF-':
-                            raise ValueError("Invalid PDF file format")
+                    # Validate PDF first
+                    is_valid, validation_result = pdf_processor.validate_pdf(filepath)
+                    if not is_valid:
+                        raise ValueError(f"Invalid PDF file: {validation_result}")
                 except Exception as e:
                     raise ValueError(f"Error validating PDF: {str(e)}")
                 
@@ -471,21 +471,21 @@ def process_pdf_background(filepath, document_id, metadata, settings):
                         save_status_to_file(document_id, processing_status[document_id])
                     
             except Exception as e:
-                logger.error(f"Error processing PDF {document_id}: {str(e)}")
+                logger.error(f"Error processing PDF {document_id}: {str(e)}", exc_info=True)
                 update_progress(f"Error processing PDF: {str(e)}", 0)
                 
-                # Update metadata to reflect the error
+                # Update metadata with detailed error
                 metadata['processingComplete'] = False
                 metadata['processingError'] = str(e)
                 metadata['processedDate'] = datetime.utcnow().isoformat() + 'Z'
                 
-                # Save updated metadata with error information
-                metadata_path = f"{filepath}.json"
+                # Save error metadata
                 try:
+                    metadata_path = f"{filepath}.json"
                     with open(metadata_path, 'w') as f:
                         json.dump(metadata, f, indent=2)
                 except Exception as write_err:
-                    logger.error(f"Error saving error metadata for {document_id}: {write_err}")
+                    logger.error(f"Error saving error metadata: {write_err}")
             
             # Hilfsfunktion für direkten Cleanup ohne Executor hinzufügen
             def cleanup_status_direct(doc_id):
