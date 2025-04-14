@@ -134,7 +134,7 @@ def ensure_client():
 
 def get_or_create_collection(collection_name: str):
     """
-    Get or create a collection with proper error handling
+    Get or create a collection with proper error handling and dimension mismatch correction
     
     Args:
         collection_name: Name of the collection
@@ -155,24 +155,75 @@ def get_or_create_collection(collection_name: str):
             # Check if collection already exists
             collections = client.list_collections()
             if collection_name in [c.name for c in collections]:
-                coll = client.get_collection(name=collection_name, embedding_function=ef)
-                
-                # Spezieller Fix für den Dimensions-Mismatch
                 try:
-                    # Versuche eine kleine Abfrage um die Dimensionen zu überprüfen
-                    test_result = coll.query(query_texts=["test"], n_results=1)
-                    logger.info(f"Collection {collection_name} accessed successfully")
-                    return coll
+                    coll = client.get_collection(name=collection_name, embedding_function=ef)
+                    
+                    # Test collection with a simple query to verify dimensions match
+                    try:
+                        test_result = coll.query(query_texts=["test dimension check"], n_results=1)
+                        logger.info(f"Collection {collection_name} accessed successfully")
+                        return coll
+                    except Exception as dim_err:
+                        # Check if the error is related to dimensions
+                        if "dimension" in str(dim_err).lower() or "shape" in str(dim_err).lower():
+                            logger.warning(f"Dimension mismatch in collection {collection_name}, recreating...")
+                            
+                            try:
+                                # Get documents before deleting collection
+                                all_docs = None
+                                try:
+                                    # Try to get all documents but avoid using embeddings
+                                    all_docs = coll.get(include=["documents", "metadatas"])
+                                    logger.info(f"Retrieved {len(all_docs['ids'])} documents for migration")
+                                except Exception as get_err:
+                                    logger.error(f"Could not retrieve documents for migration: {get_err}")
+                                
+                                # Delete and recreate collection
+                                client.delete_collection(collection_name)
+                                new_coll = client.create_collection(name=collection_name, embedding_function=ef)
+                                
+                                # Re-add documents if we got them successfully
+                                if all_docs and all_docs['ids'] and len(all_docs['ids']) > 0:
+                                    try:
+                                        # Batch processing in chunks of 100
+                                        batch_size = 100
+                                        total_docs = len(all_docs['ids'])
+                                        
+                                        for i in range(0, total_docs, batch_size):
+                                            end_idx = min(i + batch_size, total_docs)
+                                            batch_ids = all_docs['ids'][i:end_idx]
+                                            batch_docs = all_docs['documents'][i:end_idx]
+                                            batch_meta = all_docs['metadatas'][i:end_idx] if 'metadatas' in all_docs else None
+                                            
+                                            # Add batch to new collection
+                                            if batch_meta:
+                                                new_coll.add(
+                                                    ids=batch_ids,
+                                                    documents=batch_docs,
+                                                    metadatas=batch_meta
+                                                )
+                                            else:
+                                                new_coll.add(
+                                                    ids=batch_ids,
+                                                    documents=batch_docs
+                                                )
+                                            
+                                            logger.info(f"Migrated batch {i//batch_size + 1} with {len(batch_ids)} documents")
+                                        
+                                        logger.info(f"Successfully migrated {total_docs} documents to new collection")
+                                    except Exception as migrate_err:
+                                        logger.error(f"Error during document migration: {migrate_err}")
+                                
+                                return new_coll
+                            except Exception as recreate_err:
+                                logger.error(f"Failed to recreate collection: {recreate_err}")
+                                raise
+                        else:
+                            # Other error not related to dimensions
+                            raise
                 except Exception as e:
-                    if "dimension" in str(e).lower():
-                        # Bei Dimensions-Fehler die Sammlung löschen und neu erstellen
-                        logger.warning(f"Dimension mismatch in collection {collection_name}, recreating...")
-                        client.delete_collection(collection_name)
-                        # Collection neu erstellen mit aktuellem Embedding-Modell
-                        return client.create_collection(name=collection_name, embedding_function=ef)
-                    else:
-                        # Andere Fehler weitergeben
-                        raise
+                    logger.error(f"Error accessing collection {collection_name}: {e}")
+                    raise
             else:
                 # Create new collection
                 return client.create_collection(name=collection_name, embedding_function=ef)

@@ -17,6 +17,7 @@ import threading
 import psutil
 from functools import wraps
 import jwt
+import re
 
 # Import services
 from services.pdf_processor import PDFProcessor
@@ -634,9 +635,100 @@ def get_document(document_id):
         logger.error(f"Error retrieving document {document_id}: {e}")
         return jsonify({"error": str(e)}), 500
 
+def validate_metadata(metadata):
+    """
+    Validate document metadata structure and content
+    
+    Args:
+        metadata: Document metadata to validate
+        
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    if not isinstance(metadata, dict):
+        return False, "Metadata must be a dictionary"
+    
+    # Required fields validation
+    required_fields = ['title', 'type']
+    for field in required_fields:
+        if field not in metadata or not metadata[field]:
+            return False, f"Required field '{field}' is missing or empty"
+    
+    # Title validation
+    if len(metadata.get('title', '')) > 500:
+        return False, "Title is too long (max 500 characters)"
+    
+    # Type validation
+    valid_types = ['article', 'book', 'edited_book', 'conference', 'thesis', 
+                  'report', 'newspaper', 'website', 'interview', 'press', 'other']
+    if metadata.get('type') not in valid_types:
+        return False, f"Invalid document type. Must be one of: {', '.join(valid_types)}"
+    
+    # Authors validation
+    if 'authors' in metadata:
+        authors = metadata['authors']
+        if not isinstance(authors, list):
+            return False, "Authors must be a list"
+        
+        for i, author in enumerate(authors):
+            if isinstance(author, dict):
+                if 'name' not in author:
+                    return False, f"Author at position {i} is missing required 'name' field"
+            elif isinstance(author, str):
+                # Convert string authors to dict format for consistency
+                authors[i] = {'name': author}
+            else:
+                return False, f"Invalid author format at position {i}"
+    
+    # Date validation
+    date_fields = ['publicationDate', 'date', 'lastUpdated', 'accessDate']
+    for field in date_fields:
+        if field in metadata and metadata[field]:
+            date_value = metadata[field]
+            
+            # Basic ISO date format validation (YYYY-MM-DD)
+            if isinstance(date_value, str):
+                # Full ISO date
+                if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_value):
+                    # Year only
+                    if not re.match(r'^\d{4}$', date_value):
+                        # Year-Month
+                        if not re.match(r'^\d{4}-\d{2}$', date_value):
+                            return False, f"Invalid date format for {field}. Use YYYY-MM-DD, YYYY-MM or YYYY"
+            else:
+                return False, f"Date field {field} must be a string"
+    
+    # DOI validation
+    if 'doi' in metadata and metadata['doi']:
+        doi = metadata['doi']
+        if not re.match(r'^10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+$', doi):
+            return False, "Invalid DOI format. DOIs should start with '10.'"
+    
+    # ISBN validation
+    if 'isbn' in metadata and metadata['isbn']:
+        isbn = metadata['isbn'].replace('-', '').replace(' ', '')
+        if not (len(isbn) == 10 or len(isbn) == 13):
+            return False, "Invalid ISBN length. Must be 10 or 13 digits."
+        if not isbn.isdigit() and not (isbn[:-1].isdigit() and isbn[-1] in '0123456789Xx'):
+            return False, "Invalid ISBN format. Must contain only digits (except for ISBN-10 check digit 'X')"
+    
+    # Check for excessive field lengths
+    long_text_fields = {
+        'abstract': 10000,
+        'title': 500,
+        'journal': 200,
+        'publisher': 200
+    }
+    
+    for field, max_length in long_text_fields.items():
+        if field in metadata and isinstance(metadata[field], str) and len(metadata[field]) > max_length:
+            return False, f"Field '{field}' exceeds maximum length of {max_length} characters"
+    
+    return True, None
+
 @documents_bp.route('', methods=['POST'])
 def save_document():
-    """Upload und Verarbeitung eines neuen Dokuments mit verbesserter Benutzertrennung und Metadaten-Updates"""
+    """Upload und Verarbeitung eines neuen Dokuments mit verbesserter Validierung"""
     try:
         # Prüfen, ob Datei oder Metadaten vorhanden sind
         if 'file' not in request.files and not request.form.get('data'):
@@ -649,6 +741,11 @@ def save_document():
                 metadata = json.loads(request.form.get('data', '{}'))
             except json.JSONDecodeError:
                 return jsonify({"error": "Ungültige JSON-Daten"}), 400
+        
+        # Metadatenvalidierung durchführen
+        is_valid, error_message = validate_metadata(metadata)
+        if not is_valid:
+            return jsonify({"error": error_message}), 400
         
         # Dokument-ID generieren, falls nicht vorhanden
         document_id = metadata.get('id', str(uuid.uuid4()))

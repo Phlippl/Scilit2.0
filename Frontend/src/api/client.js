@@ -35,9 +35,22 @@ const onRefreshError = (error) => {
   
   // Benachrichtigung für Abmeldung auslösen
   const authErrorEvent = new CustomEvent('auth:error', {
-    detail: { status: 401, message: 'Sitzung abgelaufen' }
+    detail: { status: 401, message: 'Session expired' }
   });
   window.dispatchEvent(authErrorEvent);
+};
+
+// Standardisierte Fehlerobjekt-Erstellung
+const createErrorObject = (error) => {
+  return {
+    url: error.config?.url,
+    method: error.config?.method,
+    status: error.response?.status,
+    statusText: error.response?.statusText,
+    data: error.response?.data,
+    message: error.response?.data?.message || error.response?.data?.error || error.message,
+    timestamp: new Date().toISOString()
+  };
 };
 
 // Request interceptor for authentication
@@ -48,22 +61,48 @@ apiClient.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
     
-    // Debugging: Log outgoing requests
-    console.log(`Request: ${config.method?.toUpperCase() || 'UNKNOWN'} ${config.url}`);
+    // Add request timestamp for timing metrics
+    config.metadata = { startTime: new Date().getTime() };
+    
+    // Debugging: Log outgoing requests in development
+    if (import.meta.env.DEV) {
+      console.log(`Request: ${config.method.toUpperCase()} ${config.url}`);
+    }
     
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => {
+    console.error('Request error:', createErrorObject(error));
+    return Promise.reject(error);
+  }
 );
 
 // Response interceptor for unified error handling
 apiClient.interceptors.response.use(
   (response) => {
-    // Debugging: Log successful responses
-    console.log(`Response: ${response.status} ${response.config.url}`);
+    // Calculate request duration for performance monitoring
+    const requestDuration = response.config.metadata 
+      ? new Date().getTime() - response.config.metadata.startTime 
+      : undefined;
+    
+    // Debugging: Log successful responses in development
+    if (import.meta.env.DEV) {
+      console.log(`Response: ${response.status} ${response.config.url}${
+        requestDuration ? ` (${requestDuration}ms)` : ''
+      }`);
+    }
+    
+    // Log slow requests
+    if (requestDuration && requestDuration > 5000) {
+      console.warn(`Slow request detected: ${response.config.url} took ${requestDuration}ms`);
+    }
+    
     return response;
   },
   async (error) => {
+    // Create standardized error object for logging and handling
+    const errorObj = createErrorObject(error);
+    
     // Handle test user mode when API is not available
     if (testUserEnabled && (!error.response || error.code === 'ERR_NETWORK')) {
       console.warn('API not available, using test mode fallbacks');
@@ -71,24 +110,19 @@ apiClient.interceptors.response.use(
       // Return with flag for test mode
       return Promise.reject({
         ...error,
-        isTestMode: true
+        isTestMode: true,
+        errorObj
       });
     }
     
     // Log detailed error information
-    console.error('API Error:', {
-      url: error.config?.url,
-      method: error.config?.method,
-      status: error.response?.status,
-      data: error.response?.data,
-      message: error.message
-    });
+    console.error('API Error:', errorObj);
     
     // Token-Refresh-Logik für 401 (Unauthorized)
     if (error.response && error.response.status === 401) {
       const originalRequest = error.config;
       
-      // Verhindere unendliche Loops (wenn Refresh-Anfrage selbst 401 zurückgibt)
+      // Prevent infinite loops (if the refresh request itself returns 401)
       if (originalRequest.url.includes('/api/auth/refresh')) {
         localStorage.removeItem('auth_token');
         localStorage.removeItem('user_data');
@@ -96,58 +130,52 @@ apiClient.interceptors.response.use(
         return Promise.reject(error);
       }
       
-      // Prüfe, ob wir bereits einen Refresh durchführen
+      // Check if we're already refreshing
       if (!isRefreshing) {
         isRefreshing = true;
         
-        // Token-Refresh versuchen
         try {
           const token = localStorage.getItem('auth_token');
           
           if (!token) {
-            throw new Error("Kein Token vorhanden");
+            throw new Error("No token available");
           }
           
-          // Anfrage zum Token-Refresh
-          const response = await axios.post(`${apiClient.defaults.baseURL}/auth/refresh`, {}, {
+          // Request to refresh token
+          const response = await axios.post('/api/auth/refresh', {}, {
             headers: {
               Authorization: `Bearer ${token}`
             }
           });
           
-          // Prüfe, ob die Antwort ein neues Token enthält
-          if (!response.data || !response.data.token) {
-            throw new Error("Ungültige Antwort vom Server");
-          }
-          
-          // Speichere neuen Token
+          // Store new token
           const newToken = response.data.token;
           localStorage.setItem('auth_token', newToken);
           
-          // Aktualisiere auch Benutzerdaten wenn vorhanden
+          // Update user data if available
           if (response.data.user) {
             localStorage.setItem('user_data', JSON.stringify(response.data.user));
           }
           
-          // Setze neuen Token für alle weiteren Anfragen
-          apiClient.defaults.headers.common.Authorization = `Bearer ${newToken}`;
+          // Set new token for all future requests
+          apiClient.defaults.headers.Authorization = `Bearer ${newToken}`;
           
-          // Benachrichtige alle wartenden Anfragen
+          // Notify all waiting requests
           onTokenRefreshed(newToken);
           isRefreshing = false;
           
-          // Wiederhole die Originalanfrage mit dem neuen Token
+          // Retry the original request with the new token
           originalRequest.headers.Authorization = `Bearer ${newToken}`;
           return apiClient(originalRequest);
         } catch (refreshError) {
-          console.error('Token-Refresh fehlgeschlagen:', refreshError);
+          console.error('Token refresh failed:', refreshError);
           localStorage.removeItem('auth_token');
           localStorage.removeItem('user_data');
           onRefreshError(refreshError);
           return Promise.reject(refreshError);
         }
       } else {
-        // Anfrage zu den Subscribers hinzufügen, wenn bereits ein Refresh läuft
+        // Add request to subscribers if refresh is already in progress
         return new Promise(resolve => {
           subscribeToTokenRefresh(token => {
             originalRequest.headers.Authorization = `Bearer ${token}`;
@@ -156,6 +184,48 @@ apiClient.interceptors.response.use(
         });
       }
     }
+    
+    // Handle specific error types
+    if (error.response) {
+      // Server responded with error status (4xx, 5xx)
+      switch (error.response.status) {
+        case 403:
+          // Forbidden - User doesn't have permission
+          window.dispatchEvent(new CustomEvent('api:permission-denied', {
+            detail: errorObj
+          }));
+          break;
+        case 404:
+          // Not found
+          window.dispatchEvent(new CustomEvent('api:not-found', {
+            detail: errorObj
+          }));
+          break;
+        case 408:
+        case 504:
+          // Timeout
+          window.dispatchEvent(new CustomEvent('api:timeout', {
+            detail: errorObj
+          }));
+          break;
+        case 500:
+        case 502:
+        case 503:
+          // Server error
+          window.dispatchEvent(new CustomEvent('api:server-error', {
+            detail: errorObj
+          }));
+          break;
+      }
+    } else if (error.request) {
+      // Request made but no response received (network error)
+      window.dispatchEvent(new CustomEvent('api:network-error', {
+        detail: errorObj
+      }));
+    }
+    
+    // Add standardized error object to the error
+    error.errorData = errorObj;
     
     return Promise.reject(error);
   }

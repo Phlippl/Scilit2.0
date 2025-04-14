@@ -13,6 +13,7 @@ import numpy as np
 import json
 from typing import Dict, List, Any, Optional, Union
 import gc 
+import psutil
 
 # PyMuPDF import with error handling
 try:
@@ -615,6 +616,7 @@ class PDFProcessor:
     def process_file(self, file_path, settings=None, progress_callback=None):
         """
         Process a PDF file completely: extraction, chunking, metadata
+        with improved file size validation and error handling
         
         Args:
             file_path: Path to PDF file
@@ -632,6 +634,40 @@ class PDFProcessor:
                 'performOCR': False
             }
         
+        # Define file size limits
+        MAX_FILE_SIZE_MB = 50  # 50 MB maximum file size
+        WARN_FILE_SIZE_MB = 25  # Warning threshold
+        
+        # Check file size before processing
+        try:
+            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            
+            if file_size_mb > MAX_FILE_SIZE_MB:
+                error_msg = f"File too large: {file_size_mb:.1f} MB. Maximum allowed size is {MAX_FILE_SIZE_MB} MB."
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            if file_size_mb > WARN_FILE_SIZE_MB:
+                logger.warning(f"Large file detected: {file_size_mb:.1f} MB. Processing may take longer.")
+                # Notify user about potential long processing time
+                if progress_callback:
+                    progress_callback(f"Warning: Large file ({file_size_mb:.1f} MB). Processing may take longer.", 0)
+        except Exception as e:
+            if "too large" in str(e):
+                raise  # Re-raise size limit errors
+            logger.error(f"Error checking file size: {e}")
+            # Continue processing if error is not related to file size
+        
+        # Validate PDF file format
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(5)
+                if header != b'%PDF-':
+                    raise ValueError("Invalid PDF file format. File doesn't start with %PDF-")
+        except Exception as e:
+            logger.error(f"PDF validation error: {e}")
+            raise ValueError(f"Invalid or corrupted PDF file: {str(e)}")
+        
         # Define a progress wrapper to divide progress across stages
         def progress_wrapper(stage, progress_func=None):
             if not progress_callback:
@@ -646,49 +682,68 @@ class PDFProcessor:
             else:
                 return progress_callback
         
-        # Extract text with progress reporting
-        extraction_result = self.extract_text_from_pdf(
-            file_path, 
-            max_pages=settings.get('maxPages', 0),
-            perform_ocr=settings.get('performOCR', False),
-            progress_callback=progress_wrapper('extraction')
-        )
-        
-        # Progress update
-        if progress_callback:
-            progress_callback("Extracting metadata", 60)
-        
-        # Extract DOI, ISBN
-        extracted_text = extraction_result['text']
-        doi = self.extract_doi(extracted_text)
-        isbn = self.extract_isbn(extracted_text)
-        
-        # Progress update
-        if progress_callback:
-            progress_callback("Creating chunks with page tracking", 65)
-        
-        # Create chunks with page tracking
-        chunks_with_pages = self.chunk_text_with_pages(
-            extracted_text,
-            extraction_result['pages'],
-            chunk_size=settings.get('chunkSize', 1000),
-            overlap_size=settings.get('chunkOverlap', 200)
-        )
-        
-        # Progress update
-        if progress_callback:
-            progress_callback("Processing complete", 100)
-        
-        gc.collect()
+        try:
+            # Extract text with progress reporting and memory monitoring
+            start_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
+            
+            extraction_result = self.extract_text_from_pdf(
+                file_path, 
+                max_pages=settings.get('maxPages', 0),
+                perform_ocr=settings.get('performOCR', False),
+                progress_callback=progress_wrapper('extraction')
+            )
+            
+            current_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
+            memory_used = current_memory - start_memory
+            logger.info(f"Memory used for text extraction: {memory_used:.2f} MB")
+            
+            # Progress update
+            if progress_callback:
+                progress_callback("Extracting metadata", 60)
+            
+            # Extract DOI, ISBN
+            extracted_text = extraction_result['text']
+            doi = self.extract_doi(extracted_text)
+            isbn = self.extract_isbn(extracted_text)
+            
+            # Progress update
+            if progress_callback:
+                progress_callback("Creating chunks with page tracking", 65)
+            
+            # Create chunks with page tracking
+            chunks_with_pages = self.chunk_text_with_pages(
+                extracted_text,
+                extraction_result['pages'],
+                chunk_size=settings.get('chunkSize', 1000),
+                overlap_size=settings.get('chunkOverlap', 200)
+            )
+            
+            # Validate chunks - ensure we don't have any empty chunks
+            chunks_with_pages = [chunk for chunk in chunks_with_pages if chunk.get('text', '').strip()]
+            
+            # Progress update
+            if progress_callback:
+                progress_callback("Processing complete", 100)
+            
+            # Force garbage collection to free memory
+            gc.collect()
 
-        return {
-            'text': extracted_text,
-            'chunks': chunks_with_pages,
-            'metadata': {
-                'doi': doi,
-                'isbn': isbn,
-                'totalPages': extraction_result['totalPages'],
-                'processedPages': extraction_result['processedPages']
-            },
-            'pages': extraction_result['pages']
-        }
+            return {
+                'text': extracted_text,
+                'chunks': chunks_with_pages,
+                'metadata': {
+                    'doi': doi,
+                    'isbn': isbn,
+                    'totalPages': extraction_result['totalPages'],
+                    'processedPages': extraction_result['processedPages']
+                },
+                'pages': extraction_result['pages']
+            }
+        except Exception as e:
+            logger.error(f"Error in PDF processing: {str(e)}")
+            
+            # Force garbage collection on error
+            gc.collect()
+            
+            # Re-raise with more context
+            raise ValueError(f"Failed to process PDF: {str(e)}")

@@ -1,5 +1,5 @@
 // src/context/AuthContext.jsx
-import React, { createContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useState, useEffect, useCallback, useRef } from 'react';
 import * as authApi from '../api/auth';
 import apiClient from '../api/client';
 
@@ -14,12 +14,13 @@ export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const refreshTimerRef = useRef(null);
 
   // Test user config from environment variables
   const testUserEnabled = import.meta.env.VITE_TEST_USER_ENABLED === 'true';
-  const testUserEmail = import.meta.env.VITE_TEST_USER_EMAIL || '';
-  const testUserPassword = import.meta.env.VITE_TEST_USER_PASSWORD || '';
-  const testUserName = import.meta.env.VITE_TEST_USER_NAME || 'Test User';
+  const testUserEmail = import.meta.env.VITE_TEST_USER_EMAIL;
+  const testUserPassword = import.meta.env.VITE_TEST_USER_PASSWORD;
+  const testUserName = import.meta.env.VITE_TEST_USER_NAME;
 
   /**
    * Handle logout
@@ -41,7 +42,97 @@ export const AuthProvider = ({ children }) => {
     delete apiClient.defaults.headers.common.Authorization;
     setUser(null);
     setIsAuthenticated(false);
+    
+    // Clear refresh timer
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
   }, []);
+
+  /**
+   * Set up a token refresh timer
+   * Refreshes the token 30 minutes before it expires
+   */
+  const setupRefreshTimer = useCallback(() => {
+    // Clear any existing timer
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+    
+    // Calculate time until refresh (token valid for 24h, refresh 30min before expiry)
+    const timeUntilRefresh = 23.5 * 60 * 60 * 1000; // 23.5 hours in milliseconds
+    
+    // Set new timer
+    refreshTimerRef.current = setTimeout(async () => {
+      console.log('Token refresh timer triggered');
+      try {
+        await refreshToken();
+        console.log('Token refreshed successfully');
+      } catch (err) {
+        console.error('Failed to refresh token:', err);
+        // If refresh fails, log out the user
+        handleLogout(false);
+      }
+    }, timeUntilRefresh);
+    
+    console.log('Token refresh timer set for 23.5 hours from now');
+  }, [handleLogout]);
+
+  /**
+   * Check authentication status on first load
+   */
+  useEffect(() => {
+    const checkAuthStatus = async () => {
+      try {
+        // Get token from localStorage
+        const token = localStorage.getItem('auth_token');
+        
+        if (token) {
+          // Ensure we have default headers set properly
+          apiClient.defaults.headers.common.Authorization = `Bearer ${token}`;
+          
+          // Get user data
+          const userData = JSON.parse(localStorage.getItem('user_data') || 'null');
+          
+          if (userData) {
+            setUser(userData);
+            setIsAuthenticated(true);
+            setLoading(false);
+            // Set up token refresh timer whenever authenticated
+            setupRefreshTimer();
+          } else {
+            // Clear potentially invalid auth data
+            handleLogout(false);
+            setLoading(false);
+          }
+        } else {
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('Auth check error:', err);
+        handleLogout(false);
+        setLoading(false);
+      }
+    };
+  
+    checkAuthStatus();
+    
+    // Listener for auth errors (e.g., 401 from other API requests)
+    const handleAuthError = (e) => {
+      handleLogout(false);
+    };
+    
+    window.addEventListener('auth:error', handleAuthError);
+    
+    return () => {
+      window.removeEventListener('auth:error', handleAuthError);
+      // Clear refresh timer on unmount
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+    };
+  }, [handleLogout, setupRefreshTimer]);
 
   /**
    * Refresh token method - attempts to get a new token using the existing one
@@ -64,6 +155,9 @@ export const AuthProvider = ({ children }) => {
       setUser(response.user);
       setIsAuthenticated(true);
       
+      // Set up a new refresh timer
+      setupRefreshTimer();
+      
       return response.user;
     } catch (err) {
       console.error('Token refresh failed:', err);
@@ -72,69 +166,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [handleLogout]);
-
-  /**
-   * Check authentication status on first load and set up listeners
-   */
-  useEffect(() => {
-    const checkAuthStatus = async () => {
-      try {
-        // Get token from localStorage
-        const token = localStorage.getItem('auth_token');
-        
-        if (token) {
-          // Ensure we have default headers set properly
-          apiClient.defaults.headers.common.Authorization = `Bearer ${token}`;
-          
-          // Get user data or try to refresh token if needed
-          try {
-            const userData = JSON.parse(localStorage.getItem('user_data') || 'null');
-            
-            if (userData) {
-              setUser(userData);
-              setIsAuthenticated(true);
-            } else {
-              // Try to refresh token if we have token but no user data
-              const refreshedUser = await refreshToken();
-              if (!refreshedUser) {
-                handleLogout(false);
-              }
-            }
-          } catch (e) {
-            console.error('Error parsing user data:', e);
-            // Try to refresh token if we had an error
-            const refreshedUser = await refreshToken();
-            if (!refreshedUser) {
-              handleLogout(false);
-            }
-          }
-        } else {
-          // No token, ensure logged out state
-          handleLogout(false);
-        }
-      } catch (err) {
-        console.error('Auth check error:', err);
-        handleLogout(false);
-      } finally {
-        setLoading(false);
-      }
-    };
-  
-    checkAuthStatus();
-    
-    // Listener for auth errors (e.g., 401 from other API requests)
-    const handleAuthError = (e) => {
-      console.log('Auth error event received', e);
-      handleLogout(false);
-    };
-    
-    window.addEventListener('auth:error', handleAuthError);
-    
-    return () => {
-      window.removeEventListener('auth:error', handleAuthError);
-    };
-  }, [handleLogout, refreshToken]);
+  }, [handleLogout, setupRefreshTimer]);
 
   /**
    * Handle login
@@ -171,6 +203,9 @@ export const AuthProvider = ({ children }) => {
         setUser(mockUser);
         setIsAuthenticated(true);
         
+        // Set up refresh timer
+        setupRefreshTimer();
+        
         return mockUser;
       }
       
@@ -187,6 +222,9 @@ export const AuthProvider = ({ children }) => {
       setUser(response.user);
       setIsAuthenticated(true);
       
+      // Set up refresh timer
+      setupRefreshTimer();
+      
       return response.user;
     } catch (err) {
       const errorMessage = err.response?.data?.message || err.message || 'Login failed';
@@ -195,7 +233,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [testUserEnabled, testUserEmail, testUserPassword, testUserName]);
+  }, [testUserEnabled, testUserEmail, testUserPassword, testUserName, setupRefreshTimer]);
 
   /**
    * Handle registration
