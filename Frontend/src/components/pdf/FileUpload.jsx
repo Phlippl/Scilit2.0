@@ -5,9 +5,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 
 // Services
-import pdfService from '../../services/pdfService';
-import * as metadataApi from '../../api/metadata';
 import * as documentsApi from '../../api/documents';
+import * as metadataApi from '../../api/metadata';
 import { formatToISODate } from '../../utils/dateFormatter';
 
 // Subcomponents
@@ -40,6 +39,8 @@ const FullWidthContainer = ({ children }) => (
 const FileUpload = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const statusCheckInterval = 5000; // 5 seconds between status checks
+  const maxStatusChecks = 60; // Max 5 minutes of polling (60 * 5s = 300s)
   const statusCheckCount = useRef(0);
   const statusIntervalRef = useRef(null);
   
@@ -72,7 +73,6 @@ const FileUpload = () => {
   const [showSettings, setShowSettings] = useState(false);
   
   // Results
-  const [extractedText, setExtractedText] = useState('');
   const [extractedIdentifiers, setExtractedIdentifiers] = useState({ doi: null, isbn: null });
   const [chunks, setChunks] = useState([]);
   const [metadata, setMetadata] = useState(null);
@@ -102,6 +102,7 @@ const FileUpload = () => {
     return () => {
       if (statusIntervalRef.current) {
         clearInterval(statusIntervalRef.current);
+        statusIntervalRef.current = null;
       }
     };
   }, []);
@@ -112,34 +113,26 @@ const FileUpload = () => {
       // Start polling status
       if (!statusIntervalRef.current) {
         setIsCheckingStatus(true);
+        statusCheckCount.current = 0;
         checkDocumentStatus(documentId);
         
         statusIntervalRef.current = setInterval(() => {
           checkDocumentStatus(documentId);
-        }, 5000); // Check every 5 seconds
+        }, statusCheckInterval);
       }
     } else if (processingComplete || processingFailed) {
       // Stop polling when processing is complete or failed
-      if (statusIntervalRef.current) {
-        clearInterval(statusIntervalRef.current);
-        statusIntervalRef.current = null;
-        setIsCheckingStatus(false);
-      }
+      stopStatusPolling();
     }
     
-    return () => {
-      if (statusIntervalRef.current) {
-        clearInterval(statusIntervalRef.current);
-      }
-    };
+    return () => stopStatusPolling();
   }, [documentId, currentStep, processingComplete, processingFailed]);
   
-  // Monitoring function for long-running processes
+  // Set a safety timeout for long-running processes
   useEffect(() => {
     let processingTimer = null;
     
     if (processing) {
-      // Set a safety timeout to prevent UI from being stuck in processing state
       processingTimer = setTimeout(() => {
         if (processing) {
           setProcessing(false);
@@ -156,57 +149,58 @@ const FileUpload = () => {
   }, [processing]);
   
   /**
+   * Stop status polling
+   */
+  const stopStatusPolling = () => {
+    if (statusIntervalRef.current) {
+      clearInterval(statusIntervalRef.current);
+      statusIntervalRef.current = null;
+      setIsCheckingStatus(false);
+    }
+  };
+  
+  /**
    * Check document processing status
    */
   const checkDocumentStatus = async (id) => {
     try {
-      // Counter for query attempts
-      if (!statusCheckCount.current) statusCheckCount.current = 0;
+      // Increment the counter
       statusCheckCount.current++;
       
-      // After 20 attempts (approx. 1 minute) automatically abort
-      if (statusCheckCount.current > 20) {
+      // Stop polling after max attempts
+      if (statusCheckCount.current > maxStatusChecks) {
         setProcessingError("Zeitüberschreitung bei der Dokumentverarbeitung.");
-        if (statusIntervalRef.current) {
-          clearInterval(statusIntervalRef.current);
-          statusIntervalRef.current = null;
-        }
+        stopStatusPolling();
         return;
       }
       
       const response = await documentsApi.getDocumentStatus(id);
       
-      // Check if processing is complete
-      if (response.status === 'completed') {
-        setProcessingProgress(100);
-        setProcessingStage('Verarbeitung abgeschlossen');
-        setProcessingComplete(true);
-        setIsCheckingStatus(false);
-        setSaveSuccess(true);
-        
-        // Stop polling
-        if (statusIntervalRef.current) {
-          clearInterval(statusIntervalRef.current);
-          statusIntervalRef.current = null;
-        }
-      } 
-      // Check if processing is still ongoing
-      else if (response.status === 'processing') {
-        setProcessingProgress(response.progress || 0);
-        setProcessingStage(response.message || 'Verarbeitung läuft...');
-      }
-      // Check if processing failed
-      else if (response.status === 'error') {
-        setProcessingFailed(true);
-        setError(response.message || 'Fehler bei der Verarbeitung');
-        setSnackbarOpen(true);
-        setIsCheckingStatus(false);
-        
-        // Stop polling
-        if (statusIntervalRef.current) {
-          clearInterval(statusIntervalRef.current);
-          statusIntervalRef.current = null;
-        }
+      // Check status
+      switch (response.status) {
+        case 'completed':
+          setProcessingProgress(100);
+          setProcessingStage('Verarbeitung abgeschlossen');
+          setProcessingComplete(true);
+          setSaveSuccess(true);
+          stopStatusPolling();
+          break;
+          
+        case 'processing':
+          setProcessingProgress(response.progress || 0);
+          setProcessingStage(response.message || 'Verarbeitung läuft...');
+          break;
+          
+        case 'error':
+          setProcessingFailed(true);
+          setError(response.message || 'Fehler bei der Verarbeitung');
+          setSnackbarOpen(true);
+          stopStatusPolling();
+          break;
+          
+        default:
+          // Handle unknown status
+          console.warn(`Unknown processing status: ${response.status}`);
       }
     } catch (error) {
       console.error('Error checking document status:', error);
@@ -221,7 +215,6 @@ const FileUpload = () => {
     if (selectedFile && selectedFile.type === 'application/pdf') {
       setFile(selectedFile);
       setFileName(selectedFile.name);
-      // Reset state for new upload
       resetUploadState();
     } else {
       setError('Bitte wähle eine gültige PDF-Datei aus');
@@ -235,21 +228,15 @@ const FileUpload = () => {
   const resetUploadState = () => {
     setMetadata(null);
     setExtractedIdentifiers({ doi: null, isbn: null });
-    setExtractedText('');
     setChunks([]);
     setError('');
-    setCurrentStep(0); // Back to first step
+    setCurrentStep(0);
     setSaveSuccess(false);
     setProcessingComplete(false);
     setProcessingFailed(false);
     setDocumentId(null);
     setProcessingError(null);
-    
-    // Clear any existing status interval
-    if (statusIntervalRef.current) {
-      clearInterval(statusIntervalRef.current);
-      statusIntervalRef.current = null;
-    }
+    stopStatusPolling();
   };
   
   /**
@@ -271,111 +258,75 @@ const FileUpload = () => {
 
     setProcessing(true);
     setCurrentStep(1); // Move to processing step
-    
-    // Reset any previous errors
     setProcessingError(null);
     
     try {
-      // Check file size for client-side validation
-      const maxFileSizeMB = 20; // 20 MB limit
+      // Client-side file size validation
+      const maxFileSizeMB = 20;
       const fileSizeMB = file.size / (1024 * 1024);
       
       if (fileSizeMB > maxFileSizeMB) {
         throw new Error(`Die Datei ist zu groß (${fileSizeMB.toFixed(1)} MB). Maximale Größe ist ${maxFileSizeMB} MB.`);
       }
       
-      // Process PDF file with progress reporting
-      const result = await pdfService.processFile(file, {
+      // Create a form with just the file and processing settings for initial analysis
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('data', JSON.stringify({
         ...settings,
-        progressCallback: (stage, percent) => {
-          setProcessingStage(stage);
-          setProcessingProgress(percent);
-        }
+        analyzeOnly: true
+      }));
+      
+      // Start analysis
+      setProcessingStage('Extrahiere Text und Metadaten...');
+      setProcessingProgress(10);
+      
+      // Upload the file for server-side processing
+      const result = await documentsApi.analyzeDocument(formData, (stage, progress) => {
+        setProcessingStage(stage);
+        setProcessingProgress(progress);
       });
       
       // Store results
-      setExtractedText(result.text);
-      setChunks(result.chunks);
+      setChunks(result.chunks || []);
       setExtractedIdentifiers({
-        doi: result.metadata.doi,
-        isbn: result.metadata.isbn
+        doi: result.metadata?.doi,
+        isbn: result.metadata?.isbn
       });
       
-      // If DOI or ISBN was found, try to get metadata
-      if (result.metadata.doi || result.metadata.isbn) {
-        setProcessingStage('Hole Metadaten...');
-        try {
-          let fetchedMetadata = null;
-          
-          // Try DOI first
-          if (result.metadata.doi) {
-            fetchedMetadata = await metadataApi.fetchDOIMetadata(result.metadata.doi);
-          }
-          
-          // If DOI didn't work, try ISBN
-          if (!fetchedMetadata && result.metadata.isbn) {
-            fetchedMetadata = await metadataApi.fetchISBNMetadata(result.metadata.isbn);
-          }
-          
-          if (fetchedMetadata) {
-            // Create metadata with document type
-            setMetadata({
-              ...fetchedMetadata,
-              type: fetchedMetadata.type || 'other'
-            });
-          } else {
-            // Create empty metadata structure
-            setMetadata({
-              title: '',
-              authors: [],
-              publicationDate: '',
-              publisher: '',
-              journal: '',
-              doi: result.metadata.doi || '',
-              isbn: result.metadata.isbn || '',
-              abstract: '',
-              type: 'other'
-            });
-          }
-        } catch (metadataError) {
-          console.error('Error fetching metadata:', metadataError);
-          
-          // Create empty metadata structure
-          setMetadata({
-            title: '',
-            authors: [],
-            publicationDate: '',
-            publisher: '',
-            journal: '',
-            doi: result.metadata.doi || '',
-            isbn: result.metadata.isbn || '',
-            abstract: '',
-            type: 'other'
-          });
-        }
-      } else {
-        // If no identifiers were found
-        setMetadata({
-          title: '',
-          authors: [],
-          publicationDate: '',
-          publisher: '',
-          journal: '',
-          doi: '',
-          isbn: '',
-          abstract: '',
-          type: 'other'
-        });
+      // Attempt to fetch metadata using identified DOI/ISBN
+      setProcessingStage('Hole Metadaten...');
+      setProcessingProgress(90);
+      
+      try {
+        let fetchedMetadata = null;
         
-        setError('Keine DOI oder ISBN konnte aus dem Dokument extrahiert werden. Bitte geben Sie die Metadaten manuell ein.');
-        setSnackbarOpen(true);
+        // Try DOI first
+        if (result.metadata?.doi) {
+          fetchedMetadata = await metadataApi.fetchDOIMetadata(result.metadata.doi);
+        }
+        
+        // If DOI didn't work, try ISBN
+        if (!fetchedMetadata && result.metadata?.isbn) {
+          fetchedMetadata = await metadataApi.fetchISBNMetadata(result.metadata.isbn);
+        }
+        
+        if (fetchedMetadata) {
+          setMetadata({
+            ...fetchedMetadata,
+            type: fetchedMetadata.type || 'other'
+          });
+        } else {
+          createEmptyMetadata(result.metadata);
+        }
+      } catch (metadataError) {
+        console.error('Error fetching metadata:', metadataError);
+        createEmptyMetadata(result.metadata);
       }
       
       setProcessingStage('Verarbeitung abgeschlossen');
       setProcessingProgress(100);
-      
-      // Move to next step
-      setCurrentStep(2);
+      setCurrentStep(2); // Move to metadata step
     } catch (error) {
       console.error('Error processing file:', error);
       setProcessingError(`Fehler bei der Dateiverarbeitung: ${error.message}`);
@@ -386,10 +337,32 @@ const FileUpload = () => {
   }, [file, settings]);
   
   /**
+   * Create empty metadata structure with any extracted identifiers
+   */
+  const createEmptyMetadata = (extractedData = {}) => {
+    setMetadata({
+      title: '',
+      authors: [],
+      publicationDate: '',
+      publisher: '',
+      journal: '',
+      doi: extractedData?.doi || '',
+      isbn: extractedData?.isbn || '',
+      abstract: '',
+      type: 'other'
+    });
+    
+    if (!extractedData?.doi && !extractedData?.isbn) {
+      setError('Keine DOI oder ISBN konnte aus dem Dokument extrahiert werden. Bitte geben Sie die Metadaten manuell ein.');
+      setSnackbarOpen(true);
+    }
+  };
+  
+  /**
    * Handle metadata changes
    */
   const handleMetadataChange = (field, value) => {
-    // Convert date fields to ISO format
+    // Format date fields
     let formattedValue = value;
     if (field === 'publicationDate' || field === 'date' || 
         field === 'conferenceDate' || field === 'lastUpdated' || 
@@ -418,38 +391,22 @@ const FileUpload = () => {
     setCurrentStep(3); // Move to saving step
     
     try {
-      // Make sure all chunks have page numbers
-      const chunksWithPages = chunks.map(chunk => {
-        // If chunk is already properly formatted with page_number
-        if (typeof chunk === 'object' && chunk.hasOwnProperty('text') && chunk.hasOwnProperty('page_number')) {
-          return chunk;
-        }
-        
-        // If it's just a text string, try to guess the page (fallback to page 1)
-        return {
-          text: typeof chunk === 'string' ? chunk : chunk.text || '',
-          page_number: chunk.page_number || 1
-        };
-      });
+      // Normalize chunks for consistent storage
+      const chunksWithPages = normalizeChunks(chunks);
       
-      // Create flat data structure for important metadata
+      // Create document data
       const documentData = {
-        // Set important fields directly in root
         title: metadata.title.trim(),
         type: metadata.type || 'article',
         authors: metadata.authors || [],
-        
-        // Rest of metadata in metadata object
         metadata: {
           ...metadata,
-          // Format dates properly
           publicationDate: formatToISODate(metadata.publicationDate) || new Date().toISOString().split('T')[0],
           date: metadata.date ? formatToISODate(metadata.date) : undefined,
           conferenceDate: metadata.conferenceDate ? formatToISODate(metadata.conferenceDate) : undefined,
           lastUpdated: metadata.lastUpdated ? formatToISODate(metadata.lastUpdated) : undefined,
           accessDate: metadata.accessDate ? formatToISODate(metadata.accessDate) : undefined
         },
-        text: extractedText,
         chunks: chunksWithPages,
         fileName: fileName,
         fileSize: file.size,
@@ -461,34 +418,48 @@ const FileUpload = () => {
         chunkOverlap: settings.chunkOverlap
       };
   
-      // Save document and file to the server
+      // Save document with file
       const savedDoc = await documentsApi.saveDocument(documentData, file);
       
-      console.log("Document saved with ID:", savedDoc.document_id);
-      
-      // Save the document ID for status checking
+      // Store document ID for status checking
       setDocumentId(savedDoc.document_id || savedDoc.id);
-      
-      // Note: We do NOT immediately set saveSuccess here
-      // Instead, we'll check the processing status before showing success
       setProcessingStage('Verarbeitungsfortschritt überprüfen...');
       setProcessingProgress(0);
       
     } catch (error) {
       console.error('Error saving document:', error);
-      // Show more specific error message
       let errorMsg = "Error saving document: ";
-      if (error.response && error.response.data && error.response.data.error) {
+      
+      if (error.response?.data?.error) {
         errorMsg += error.response.data.error;
       } else if (error.message) {
         errorMsg += error.message;
       } else {
         errorMsg += "Unknown error";
       }
+      
       setError(errorMsg);
       setSnackbarOpen(true);
       setProcessingFailed(true);
     }
+  };
+  
+  /**
+   * Normalize chunks to consistent format
+   */
+  const normalizeChunks = (chunks) => {
+    return chunks.map(chunk => {
+      // If chunk is already properly formatted
+      if (typeof chunk === 'object' && chunk.hasOwnProperty('text') && chunk.hasOwnProperty('page_number')) {
+        return chunk;
+      }
+      
+      // Otherwise normalize the format
+      return {
+        text: typeof chunk === 'string' ? chunk : chunk.text || '',
+        page_number: chunk.page_number || 1
+      };
+    }).filter(chunk => chunk.text.trim()); // Remove empty chunks
   };
   
   /**
@@ -570,7 +541,6 @@ const FileUpload = () => {
             maxWidth: 1500
           }}
         >
-          {/* Main heading centered */}
           <Typography 
             variant="h5" 
             component="h2" 
@@ -600,7 +570,7 @@ const FileUpload = () => {
           </Box>
         </Paper>
         
-        {/* Settings dialog */}
+        {/* Dialogs */}
         <SettingsDialog
           open={showSettings}
           settings={settings}
@@ -608,7 +578,6 @@ const FileUpload = () => {
           onChange={handleSettingsChange}
         />
         
-        {/* Processing error dialog */}
         {processingError && (
           <ProcessingErrorDialog
             open={!!processingError}

@@ -7,7 +7,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
-from flask import Blueprint, jsonify, request, current_app
+from flask import Blueprint, jsonify, request, current_app, g
 from werkzeug.utils import secure_filename
 from pathlib import Path
 import time
@@ -23,6 +23,7 @@ import re
 from services.pdf_processor import PDFProcessor
 from services.vector_db import store_document_chunks, delete_document, get_or_create_collection
 from utils.helpers import allowed_file, extract_doi, extract_isbn, get_safe_filepath
+from utils.auth_middleware import optional_auth  # Import auth middleware
 
 # Import metadata API for DOI/ISBN queries
 from api.metadata import fetch_metadata_from_crossref
@@ -34,9 +35,6 @@ documents_bp = Blueprint('documents', __name__, url_prefix='/api/documents')
 
 # Create processor instance (shared to avoid recreation)
 pdf_processor = PDFProcessor()
-
-# Thread pool for background processing
-#executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 # Thread pool for background processing
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
@@ -1103,3 +1101,268 @@ def update_document(document_id):
     except Exception as e:
         logger.error(f"Error updating document {document_id}: {e}")
         return jsonify({"error": f"Failed to update document: {str(e)}"}), 500
+
+# Backend/api/documents.py - Add these new endpoints
+
+@timeout_handler(max_seconds=120, cpu_limit=70)
+def analyze_document_background(filepath, document_id, settings):
+    """
+    Background task to analyze a document
+    
+    Args:
+        filepath: Path to the document
+        document_id: Document ID
+        settings: Processing settings
+    """
+    from flask import current_app
+    import gc
+    gc.enable()  # Enable garbage collection
+    
+    # Create app context
+    from app import create_app
+    app = create_app()
+    
+    with app.app_context():
+        try:
+            # Update status
+            with processing_status_lock:
+                processing_status[document_id] = {
+                    "status": "processing",
+                    "progress": 10,
+                    "message": "Analyzing document..."
+                }
+                # Save status to file
+                save_status_to_file(document_id, processing_status[document_id])
+            
+            # Define progress update callback
+            def update_progress(message, progress):
+                try:
+                    with processing_status_lock:
+                        processing_status[document_id] = {
+                            "status": "processing",
+                            "progress": progress,
+                            "message": message
+                        }
+                        # Save status to file
+                        save_status_to_file(document_id, processing_status[document_id])
+                except Exception as e:
+                    logger.error(f"Error updating progress for document {document_id}: {str(e)}")
+            
+            # Process PDF to extract text, metadata, and chunks
+            pdf_processor = PDFProcessor()
+            
+            # Extract processing settings
+            processing_settings = {
+                'maxPages': int(settings.get('maxPages', 0)),
+                'performOCR': bool(settings.get('performOCR', False)),
+                'chunkSize': int(settings.get('chunkSize', 1000)),
+                'chunkOverlap': int(settings.get('chunkOverlap', 200))
+            }
+            
+            # Process the file
+            result = pdf_processor.process_file(
+                filepath,
+                settings=processing_settings,
+                progress_callback=update_progress
+            )
+            
+            # Limit chunks to avoid overwhelming the response
+            MAX_CHUNKS_IN_RESPONSE = 100
+            if len(result['chunks']) > MAX_CHUNKS_IN_RESPONSE:
+                logger.info(f"Limiting chunks in response from {len(result['chunks'])} to {MAX_CHUNKS_IN_RESPONSE}")
+                result['limitedChunks'] = True
+                result['totalChunks'] = len(result['chunks'])
+                result['chunks'] = result['chunks'][:MAX_CHUNKS_IN_RESPONSE]
+            
+            # Store result for retrieval
+            with processing_status_lock:
+                processing_status[document_id] = {
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Analysis complete",
+                    "result": {
+                        "metadata": result['metadata'],
+                        "chunks": result['chunks'],
+                        "totalPages": result['metadata'].get('totalPages', 0),
+                        "processedPages": result['metadata'].get('processedPages', 0)
+                    }
+                }
+                
+                # Save results to separate file (status file might have size limits)
+                results_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_results.json")
+                with open(results_file, 'w') as f:
+                    json.dump({
+                        "metadata": result['metadata'],
+                        "chunks": result['chunks'],
+                        "totalPages": result['metadata'].get('totalPages', 0),
+                        "processedPages": result['metadata'].get('processedPages', 0)
+                    }, f, default=str)
+                
+                # Save status to file
+                save_status_to_file(document_id, {
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Analysis complete"
+                })
+            
+            # Clean up temporary file
+            try:
+                if os.path.exists(filepath):
+                    os.unlink(filepath)
+            except Exception as e:
+                logger.error(f"Error deleting temporary file {filepath}: {e}")
+                
+            # Force garbage collection
+            gc.collect()
+            
+        except Exception as e:
+            logger.error(f"Error in document analysis: {e}")
+            
+            # Update status to reflect error
+            with processing_status_lock:
+                processing_status[document_id] = {
+                    "status": "error",
+                    "progress": 0,
+                    "error": str(e),
+                    "message": f"Error analyzing document: {str(e)}"
+                }
+                # Save status to file
+                save_status_to_file(document_id, processing_status[document_id])
+            
+            # Clean up temporary file
+            try:
+                if os.path.exists(filepath):
+                    os.unlink(filepath)
+            except Exception as cleanup_error:
+                logger.error(f"Error deleting temporary file {filepath}: {cleanup_error}")
+            
+            # Force garbage collection
+            gc.collect()
+
+@documents_bp.route('/analyze', methods=['POST'])
+@optional_auth  # Use our auth middleware
+def analyze_document():
+    """
+    Analyze a document without saving it to get metadata and chunks
+    This helps separate the processing from the saving step
+    """
+    try:
+        # Get user ID from auth middleware
+        user_id = g.user_id if hasattr(g, 'user_id') else 'default_user'
+        
+        # Check if file was uploaded
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+            
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
+        
+        if not allowed_file(file.filename):
+            return jsonify({"error": "File type not allowed. Only PDF files are accepted."}), 400
+        
+        # Parse request settings
+        settings = {}
+        if 'data' in request.form:
+            try:
+                settings = json.loads(request.form.get('data', '{}'))
+            except json.JSONDecodeError:
+                return jsonify({"error": "Invalid JSON data"}), 400
+        
+        # Create document ID
+        document_id = str(uuid.uuid4())
+        
+        # Create user directory if it doesn't exist
+        user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
+        os.makedirs(user_upload_dir, exist_ok=True)
+        
+        # Save file temporarily
+        filename = secure_filename(file.filename)
+        temp_filepath = os.path.join(user_upload_dir, f"temp_{document_id}_{filename}")
+        file.save(temp_filepath)
+        
+        # Create job entry for async processing
+        with processing_status_lock:
+            processing_status[document_id] = {
+                "status": "processing",
+                "progress": 0,
+                "message": "Starting analysis..."
+            }
+            # Save status to file
+            save_status_to_file(document_id, processing_status[document_id])
+        
+        # If it's just analysis (not full processing), do it in a background thread
+        get_executor().submit(
+            analyze_document_background,
+            temp_filepath,
+            document_id,
+            settings
+        )
+        
+        # Return job ID for status polling
+        return jsonify({
+            "jobId": document_id,
+            "status": "processing",
+            "message": "Document analysis started"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting document analysis: {e}")
+        return jsonify({"error": f"Failed to analyze document: {str(e)}"}), 500
+
+
+@documents_bp.route('/analyze/<document_id>', methods=['GET'])
+@optional_auth
+def get_analysis_status(document_id):
+    """Get document analysis status and results"""
+    try:
+        # Get user ID from auth middleware
+        user_id = g.user_id if hasattr(g, 'user_id') else 'default_user'
+        
+        # Check status in memory first
+        with processing_status_lock:
+            if document_id in processing_status:
+                status_data = processing_status[document_id]
+                
+                # If completed, return results too
+                if status_data.get("status") == "completed" and "result" in status_data:
+                    return jsonify({
+                        "status": "completed",
+                        "result": status_data["result"]
+                    })
+                
+                # Otherwise just return status
+                return jsonify(status_data)
+        
+        # If not in memory, check status file
+        status_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_status.json")
+        if os.path.exists(status_file):
+            try:
+                with open(status_file, 'r') as f:
+                    status_data = json.load(f)
+                
+                # If completed, check for results file
+                if status_data.get("status") == "completed":
+                    results_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_results.json")
+                    if os.path.exists(results_file):
+                        with open(results_file, 'r') as f:
+                            results_data = json.load(f)
+                        
+                        return jsonify({
+                            "status": "completed",
+                            "result": results_data
+                        })
+                
+                return jsonify(status_data)
+            except Exception as e:
+                logger.error(f"Error reading status file: {e}")
+        
+        # Not found
+        return jsonify({
+            "status": "error",
+            "error": "Analysis job not found"
+        }), 404
+        
+    except Exception as e:
+        logger.error(f"Error getting analysis status: {e}")
+        return jsonify({"error": f"Failed to get analysis status: {str(e)}"}), 500

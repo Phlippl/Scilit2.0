@@ -221,3 +221,116 @@ export const deleteDocument = async (id) => {
     };
   }
 };
+
+/**
+ * Analyzes a document without saving it to get metadata and chunks
+ * 
+ * @param {FormData} formData - Form data with file and settings
+ * @param {Function} progressCallback - Optional callback for progress updates
+ * @returns {Promise<Object>} Analysis results with metadata and chunks
+ */
+export const analyzeDocument = async (formData, progressCallback = null) => {
+  try {
+    // Create a custom axios instance for this request to handle progress
+    const axiosInstance = axios.create({
+      baseURL: apiClient.defaults.baseURL,
+      headers: {
+        ...apiClient.defaults.headers,
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+
+    // Add the authorization header if available
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      axiosInstance.defaults.headers.Authorization = `Bearer ${token}`;
+    }
+
+    // Add progress tracking if a callback is provided
+    if (progressCallback) {
+      axiosInstance.defaults.onUploadProgress = (progressEvent) => {
+        const uploadProgress = Math.round((progressEvent.loaded * 30) / progressEvent.total);
+        progressCallback('Uploading file...', uploadProgress);
+      };
+    }
+
+    const response = await axiosInstance.post(`${DOCUMENTS_ENDPOINT}/analyze`, formData);
+    
+    // Track progress for processing phase
+    if (response.data.jobId && progressCallback) {
+      // Start polling for analysis status
+      let completed = false;
+      let attempt = 0;
+      
+      while (!completed && attempt < 30) { // Max 30 attempts (5 minutes with 10s interval)
+        attempt++;
+        
+        // Wait 10 seconds between polls
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        
+        try {
+          const statusResponse = await apiClient.get(`${DOCUMENTS_ENDPOINT}/analyze/${response.data.jobId}`);
+          
+          if (statusResponse.data.status === 'completed') {
+            completed = true;
+            return statusResponse.data.result;
+          } else if (statusResponse.data.status === 'processing') {
+            // Update progress (30-90%)
+            const processingProgress = 30 + Math.min(60, attempt * 2);
+            progressCallback(statusResponse.data.message || 'Processing document...', processingProgress);
+          } else if (statusResponse.data.status === 'error') {
+            throw new Error(statusResponse.data.error || 'Analysis failed');
+          }
+        } catch (pollError) {
+          console.error('Error polling analysis status:', pollError);
+          // On network errors, continue polling
+          if (pollError.message.includes('Network Error')) {
+            continue;
+          }
+          throw pollError;
+        }
+      }
+      
+      if (!completed) {
+        throw new Error('Analysis timed out');
+      }
+    }
+    
+    return response.data;
+  } catch (error) {
+    // In test mode, return mock data
+    if (testUserEnabled && (error.isTestMode || error.code === 'ERR_NETWORK')) {
+      console.log('Using mock document analysis');
+      
+      // Simulate progress updates
+      if (progressCallback) {
+        progressCallback('Starting analysis...', 10);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        progressCallback('Extracting text...', 30);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        progressCallback('Analyzing document...', 50);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        progressCallback('Extracting metadata...', 70);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        progressCallback('Creating chunks...', 90);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        progressCallback('Analysis complete', 100);
+      }
+      
+      // Generate mock analysis result
+      return {
+        metadata: {
+          doi: '10.1234/example.2023.0001',
+          isbn: null
+        },
+        chunks: Array(15).fill().map((_, i) => ({
+          text: `This is sample chunk ${i+1} with some academic content for demonstration purposes.`,
+          page_number: Math.floor(i/3) + 1
+        }))
+      };
+    }
+    
+    console.error('Error analyzing document:', error);
+    throw error.response?.data || { message: 'Failed to analyze document' };
+  }
+};
