@@ -249,8 +249,6 @@ const FileUpload = () => {
     'In Datenbank speichern'
   ];
 
-  
-
   // Authentication check
   useEffect(() => {
     if (!isAuthenticated) {
