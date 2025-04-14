@@ -8,7 +8,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-class UserService:
+class AuthService:
     """Service for handling user authentication with persistent storage"""
     
     def __init__(self):
