@@ -257,7 +257,7 @@ def get_document_status(document_id):
         }), 500
 
 # Apply the timeout decorator to the process_pdf_background function
-@timeout_handler(max_seconds=300, cpu_limit=70)  # 5 Minuten max, 70% CPU limit
+@timeout_handler(max_seconds=120, cpu_limit=50)  # 5 Minuten max, 70% CPU limit
 def process_pdf_background(filepath, document_id, metadata, settings):
     """
     Process PDF file in background thread with improved error handling
@@ -277,7 +277,7 @@ def process_pdf_background(filepath, document_id, metadata, settings):
     app = create_app()
     with app.app_context():
         # Set reasonable limits
-        max_file_size_mb = 50  # Maximum file size to process in MB
+        max_file_size_mb = 20 #50  # Maximum file size to process in MB
         
         try:
             # Check file size

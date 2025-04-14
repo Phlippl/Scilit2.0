@@ -274,7 +274,7 @@ const FileUpload = () => {
         
         statusIntervalRef.current = setInterval(() => {
           checkDocumentStatus(documentId);
-        }, 3000); // Check every 3 seconds
+        }, 5000); // Check every 5 seconds
       }
     } else if (processingComplete || processingFailed) {
       // Stop polling when processing is complete or failed
@@ -318,6 +318,20 @@ const FileUpload = () => {
    */
   const checkDocumentStatus = async (id) => {
     try {
+      // Zähler für Abfrageversuche
+      if (!statusCheckCount.current) statusCheckCount.current = 0;
+      statusCheckCount.current++;
+      
+      // Nach 20 Versuchen (ca. 1 Minute) automatisch abbrechen
+      if (statusCheckCount.current > 20) {
+        setProcessingError("Zeitüberschreitung bei der Dokumentverarbeitung.");
+        if (statusIntervalRef.current) {
+          clearInterval(statusIntervalRef.current);
+          statusIntervalRef.current = null;
+        }
+        return;
+      }
+      
       const response = await documentsApi.getDocumentStatus(id);
       
       // Check if processing is complete

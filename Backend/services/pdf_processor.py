@@ -439,7 +439,7 @@ class PDFProcessor:
         robust error handling and performance safeguards
         """
         # Set maximum runtime and text length limits
-        MAX_TEXT_LENGTH = 1_000_000  # 1 million characters max
+        MAX_TEXT_LENGTH = 500_000 #1_000_000  # 1 million characters max
         MAX_PARAGRAPHS = 5000  # Prevent excessive memory usage
         
         if not text or chunk_size <= 0:
@@ -455,12 +455,12 @@ class PDFProcessor:
             return [text]
         
         # For extremely large texts, break into segments first
-        if len(text) > 100000:  # 100K threshold
+        if len(text) > 20000: #100000:  # 100K threshold
             logger.info(f"Text too large for single semantic chunking, processing in segments")
             segments = []
             # Process 50K segments with 5K overlap for context
-            segment_size = 50000
-            overlap = 5000
+            segment_size = 10000 #50000
+            overlap = 1000 #5000
             
             for i in range(0, len(text), segment_size - overlap):
                 end = min(i + segment_size, len(text))
