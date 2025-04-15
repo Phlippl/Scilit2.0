@@ -1,7 +1,7 @@
 // src/api/auth.js
 import apiClient from './client';
 
-const AUTH_ENDPOINT = '/auth';
+const AUTH_ENDPOINT = '/api/auth';
 
 /**
  * Logs in a user with the provided credentials
@@ -68,15 +68,15 @@ export const getCurrentUser = async () => {
 };
 
 /**
- * Aktualisiert ein abgelaufenes Token
+ * Refreshes an expired token
  * 
- * @returns {Promise<Object>} Neues Token und Benutzerdaten
+ * @returns {Promise<Object>} New token and user data
  */
 export const refreshToken = async () => {
   try {
     const response = await apiClient.post(`${AUTH_ENDPOINT}/refresh`);
     return response.data;
   } catch (error) {
-    throw error.response?.data || { message: 'Token-Aktualisierung fehlgeschlagen' };
+    throw error.response?.data || { message: 'Token refresh failed' };
   }
 };

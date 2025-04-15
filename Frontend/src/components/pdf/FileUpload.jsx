@@ -177,13 +177,19 @@ const FileUpload = () => {
       
       const response = await documentsApi.getDocumentStatus(id);
       
-      
-
       // Check status
       switch (response.status) {
         case 'completed':
           setProcessingProgress(100);
           setProcessingStage('Verarbeitung abgeschlossen');
+          setProcessingComplete(true);
+          setSaveSuccess(true);
+          stopStatusPolling();
+          break;
+          
+        case 'completed_with_warnings':
+          setProcessingProgress(100);
+          setProcessingStage('Verarbeitung mit Warnungen abgeschlossen');
           setProcessingComplete(true);
           setSaveSuccess(true);
           stopStatusPolling();
@@ -290,15 +296,6 @@ const FileUpload = () => {
         setProcessingProgress(progress);
       });
       
-      try {
-        const response = await documentsApi.analyzeDocument(file);
-        setProcessingComplete(true);
-      } catch (error) {
-        console.error('Error analyzing document:', error);
-        setProcessingFailed(true);
-        setError(error.response?.data?.message || error.message || 'Unbekannter Fehler');
-      }
-      
       // Store results
       setChunks(result.chunks || []);
       setExtractedIdentifiers({
@@ -319,8 +316,7 @@ const FileUpload = () => {
         } 
         // Then try ISBN if DOI failed
         else if (result.metadata?.isbn && !fetchedMetadata) {
-          // Note: Add ISBN metadata fetching implementation if needed
-          // fetchedMetadata = await metadataApi.fetchISBNMetadata(result.metadata.isbn);
+          fetchedMetadata = await metadataApi.fetchISBNMetadata(result.metadata.isbn);
         }
         
         if (fetchedMetadata) {
@@ -417,18 +413,19 @@ const FileUpload = () => {
         title: metadata.title.trim(),
         type: metadata.type || 'article',
         authors: metadata.authors || [],
-        metadata: {
-          ...metadata,
-          publicationDate: formatToISODate(metadata.publicationDate) || new Date().toISOString().split('T')[0],
-          date: metadata.date ? formatToISODate(metadata.date) : undefined,
-          conferenceDate: metadata.conferenceDate ? formatToISODate(metadata.conferenceDate) : undefined,
-          lastUpdated: metadata.lastUpdated ? formatToISODate(metadata.lastUpdated) : undefined,
-          accessDate: metadata.accessDate ? formatToISODate(metadata.accessDate) : undefined
-        },
-        chunks: chunksWithPages,
-        fileName: fileName,
-        fileSize: file.size,
-        uploadDate: new Date().toISOString(),
+        publicationDate: formatToISODate(metadata.publicationDate) || new Date().toISOString().split('T')[0],
+        date: metadata.date ? formatToISODate(metadata.date) : undefined,
+        conferenceDate: metadata.conferenceDate ? formatToISODate(metadata.conferenceDate) : undefined,
+        lastUpdated: metadata.lastUpdated ? formatToISODate(metadata.lastUpdated) : undefined,
+        accessDate: metadata.accessDate ? formatToISODate(metadata.accessDate) : undefined,
+        journal: metadata.journal,
+        volume: metadata.volume,
+        issue: metadata.issue,
+        pages: metadata.pages,
+        publisher: metadata.publisher,
+        doi: metadata.doi,
+        isbn: metadata.isbn,
+        abstract: metadata.abstract,
         // Processing settings
         maxPages: settings.maxPages,
         performOCR: settings.performOCR,

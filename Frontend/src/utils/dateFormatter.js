@@ -80,6 +80,13 @@ export const formatToISODate = (date) => {
   }
 };
 
+/**
+ * Formatiert ein ISO-Datum in ein lesbares Format
+ * 
+ * @param {string} isoDate - ISO-Datum (YYYY-MM-DD)
+ * @param {string} locale - Locale für die Formatierung
+ * @returns {string} - Formatiertes Datum
+ */
 export const formatFromISODate = (isoDate, locale = 'de-DE') => {
   if (!isoDate) return '';
   

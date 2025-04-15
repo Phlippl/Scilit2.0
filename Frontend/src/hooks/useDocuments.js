@@ -54,9 +54,11 @@ export const useDocuments = () => {
     try {
       const fetchedDocument = await documentsApi.getDocumentById(id);
       setSelectedDocument(fetchedDocument);
+      return fetchedDocument;
     } catch (err) {
       setError(err.message || `Failed to fetch document with ID: ${id}`);
       console.error(`Error fetching document with ID ${id}:`, err);
+      return null;
     } finally {
       setIsLoading(false);
     }
@@ -184,15 +186,11 @@ export const useDocuments = () => {
    * @param {Function} progressCallback - Optional progress callback
    * @returns {Promise<Object>} Analysis results
    */
-  const analyzeDocument = useCallback(async (documentData, file, progressCallback) => {
+  const analyzeDocument = useCallback(async (formData, progressCallback) => {
     setIsLoading(true);
     setError(null);
     
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('data', JSON.stringify(documentData));
-      
       const result = await documentsApi.analyzeDocument(formData, progressCallback);
       return result;
     } catch (err) {

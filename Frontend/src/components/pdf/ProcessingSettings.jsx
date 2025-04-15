@@ -22,7 +22,6 @@ import {
 // Icons
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import TuneIcon from '@mui/icons-material/Tune';
 import SplitscreenIcon from '@mui/icons-material/Splitscreen';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import SettingsApplicationsIcon from '@mui/icons-material/SettingsApplications';

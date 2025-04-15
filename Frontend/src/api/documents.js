@@ -1,8 +1,7 @@
 // src/api/documents.js
 import apiClient from './client';
-import axios from 'axios';
 
-const DOCUMENTS_ENDPOINT = '/documents'; // Kein doppeltes /api
+const DOCUMENTS_ENDPOINT = '/api/documents'; // Corrected path with /api prefix
 
 export const getDocuments = async () => {
   try {
@@ -89,27 +88,20 @@ export const deleteDocument = async (id) => {
 
 export const analyzeDocument = async (formData, progressCallback = null) => {
   try {
-    const axiosInstance = axios.create({
-      baseURL: 'http://localhost:5000',
+    // Use the same apiClient for consistency
+    const config = {
       headers: {
-        ...apiClient.defaults.headers,
         'Content-Type': 'multipart/form-data'
-      }
-    });
+      },
+      onUploadProgress: progressCallback
+        ? (progressEvent) => {
+            const uploadProgress = Math.round((progressEvent.loaded * 30) / progressEvent.total);
+            progressCallback('Uploading file...', uploadProgress);
+          }
+        : undefined
+    };
 
-    const token = localStorage.getItem('auth_token');
-    if (token) {
-      axiosInstance.defaults.headers.Authorization = `Bearer ${token}`;
-    }
-
-    if (progressCallback) {
-      axiosInstance.defaults.onUploadProgress = (progressEvent) => {
-        const uploadProgress = Math.round((progressEvent.loaded * 30) / progressEvent.total);
-        progressCallback('Uploading file...', uploadProgress);
-      };
-    }
-
-    const response = await axiosInstance.post(`/api/documents/analyze`, formData);
+    const response = await apiClient.post(`${DOCUMENTS_ENDPOINT}/analyze`, formData, config);
 
     if (response.data.jobId && progressCallback) {
       let completed = false;

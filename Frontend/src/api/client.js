@@ -3,8 +3,8 @@ import axios from 'axios';
 
 // Base API client with configuration
 const apiClient = axios.create({
-  // Wenn VITE_API_BASE_URL definiert ist, verwende es, sonst setze nur die Basis-URL
-  baseURL: 'http://localhost:5000/api', //import.meta.env.VITE_API_BASE_URL || '', 
+  // Use the correct base URL format - ensure it doesn't add double /api
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000',
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
@@ -115,8 +115,8 @@ apiClient.interceptors.response.use(
             throw new Error("No token available");
           }
           
-          // Request to refresh token
-          const response = await axios.post('/api/auth/refresh', {}, {
+          // Request to refresh token - use the complete path
+          const response = await axios.post(`${apiClient.defaults.baseURL}/api/auth/refresh`, {}, {
             headers: {
               Authorization: `Bearer ${token}`
             }
