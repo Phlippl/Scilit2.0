@@ -3,8 +3,9 @@ import axios from 'axios';
 
 // Base API client with configuration
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api', 
-  timeout: 30000, // 30 seconds timeout for long operations like PDF processing
+  // Wenn VITE_API_BASE_URL definiert ist, verwende es, sonst setze nur die Basis-URL
+  baseURL: 'http://localhost:5000/api', //import.meta.env.VITE_API_BASE_URL || '', 
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },

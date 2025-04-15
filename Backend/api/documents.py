@@ -8,6 +8,7 @@ import logging
 import uuid
 from datetime import datetime
 from flask import Blueprint, jsonify, request, current_app, g
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from pathlib import Path
 import time
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 # Create Blueprint for document API
 documents_bp = Blueprint('documents', __name__, url_prefix='/api/documents')
+CORS(documents_bp, resources={r"/*": {"origins": "*"}})
 
 # Create processor instance (shared to avoid recreation)
 pdf_processor = PDFProcessor()

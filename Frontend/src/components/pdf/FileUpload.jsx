@@ -177,6 +177,8 @@ const FileUpload = () => {
       
       const response = await documentsApi.getDocumentStatus(id);
       
+      
+
       // Check status
       switch (response.status) {
         case 'completed':
@@ -287,6 +289,15 @@ const FileUpload = () => {
         setProcessingStage(stage);
         setProcessingProgress(progress);
       });
+      
+      try {
+        const response = await documentsApi.analyzeDocument(file);
+        setProcessingComplete(true);
+      } catch (error) {
+        console.error('Error analyzing document:', error);
+        setProcessingFailed(true);
+        setError(error.response?.data?.message || error.message || 'Unbekannter Fehler');
+      }
       
       // Store results
       setChunks(result.chunks || []);

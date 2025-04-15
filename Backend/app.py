@@ -1,33 +1,28 @@
 #!/usr/bin/env python3
 # Backend/app.py
-"""
-Main application for SciLit2.0 Backend with improved initialization and error handling
-"""
+
 import os
 import logging
 import time
 import threading
+import concurrent.futures
+import secrets
+import spacy
+import sys
 from flask import Flask, jsonify, g, Response, stream_with_context
 from flask_cors import CORS
 from dotenv import load_dotenv
-import concurrent.futures
-import secrets
 
-
-import sys
-sys.dont_write_bytecode = True  # Prevents Python from creating .pyc files
-
-# Import Blueprints
-from api.documents import documents_bp
+# Import blueprints
+from api.documents import documents_bp, get_executor
 from api.metadata import metadata_bp
 from api.query import query_bp
 from api.auth import auth_bp
 
-# Import shared components
-import spacy
-from pathlib import Path
+# Prevent .pyc files
+sys.dont_write_bytecode = True
 
-# Configure logging
+# Logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -36,24 +31,21 @@ logging.basicConfig(
         logging.FileHandler('scilit.log')
     ]
 )
-
 logger = logging.getLogger(__name__)
 
-# Load environment variables
+# Load .env
 load_dotenv()
 
-# Configuration values
+# Environment config
 UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', './uploads')
 MAX_CONTENT_LENGTH = int(os.environ.get('MAX_CONTENT_LENGTH', 20 * 1024 * 1024))
 CHROMA_PERSIST_DIR = os.environ.get('CHROMA_PERSIST_DIR', './data/chroma')
 ALLOWED_EXTENSIONS = {'pdf'}
 
-# Thread pool for background tasks
-background_executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+# Executor for background tasks
+background_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
-# Initialize spaCy model
 def initialize_nlp():
-    """Initialize spaCy model with proper fallbacks"""
     try:
         nlp = spacy.load("de_core_news_sm")
         logger.info("Loaded spaCy model: de_core_news_sm")
@@ -64,205 +56,132 @@ def initialize_nlp():
             logger.info("Loaded spaCy model: en_core_web_sm")
             return nlp
         except OSError:
-            logger.warning("No spaCy model found. Downloading en_core_web_sm...")
+            logger.warning("Downloading en_core_web_sm...")
             try:
                 spacy.cli.download("en_core_web_sm")
-                nlp = spacy.load("en_core_web_sm")
-                logger.info("Downloaded and loaded spaCy model: en_core_web_sm")
-                return nlp
+                return spacy.load("en_core_web_sm")
             except Exception as e:
-                logger.error(f"Failed to download spaCy model: {e}")
-                nlp = spacy.blank("en")
-                logger.warning("Using blank spaCy model")
-                return nlp
+                logger.error(f"spaCy download failed: {e}")
+                return spacy.blank("en")
 
 def check_embeddings():
-    """Check if vector embeddings service is available and log status"""
     try:
-        from services.vector_db import client as vector_client
-        from services.ollama_embeddings import OllamaEmbeddingFunction
-        
-        # Check if Ollama server is running 
-        ollama_url = os.environ.get('OLLAMA_API_URL', 'http://localhost:11434')
         import requests
-        response = requests.get(f"{ollama_url}/api/version", timeout=5)
-        
-        if response.status_code == 200:
-            logger.info(f"Connected to Ollama API: {response.json()}")
+        url = os.environ.get('OLLAMA_API_URL', 'http://localhost:11434')
+        res = requests.get(f"{url}/api/version", timeout=5)
+        if res.status_code == 200:
+            logger.info(f"Connected to Ollama API: {res.json()}")
         else:
-            logger.warning(f"Ollama API returned unexpected status: {response.status_code}")
+            logger.warning(f"Unexpected Ollama response: {res.status_code}")
     except Exception as e:
-        logger.warning(f"Embeddings service check failed: {e}")
-        logger.warning("Will use fallback embedding function - performance may be reduced")
+        logger.warning(f"Ollama check failed: {e}")
 
 def init_directories():
-    """Ensure all required directories exist"""
     try:
-        # Create upload folder
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        logger.info(f"Upload folder ready: {UPLOAD_FOLDER}")
-        
-        # Create ChromaDB directory
         os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
-        logger.info(f"ChromaDB directory ready: {CHROMA_PERSIST_DIR}")
-        
-        # Create any other required directories
-        log_dir = os.path.dirname('scilit.log')
-        if log_dir and not os.path.exists(log_dir):
-            os.makedirs(log_dir, exist_ok=True)
-            
-        # Create status directory
-        status_dir = os.path.join(UPLOAD_FOLDER, 'status')
-        os.makedirs(status_dir, exist_ok=True)
+        os.makedirs(os.path.join(UPLOAD_FOLDER, 'status'), exist_ok=True)
+        logger.info(f"Upload folder ready: {UPLOAD_FOLDER}")
+        logger.info(f"ChromaDB folder ready: {CHROMA_PERSIST_DIR}")
     except Exception as e:
-        logger.error(f"Error creating directories: {e}")
-        raise
+        logger.error(f"Directory init failed: {e}")
 
 def create_app():
-    """Create and configure the Flask application."""
-    # Initialize directories first
     init_directories()
-    
-    load_dotenv()
-
     app = Flask(__name__)
-    
-    # Configure CORS to fix cross-origin issues
-    CORS(app, resources={r"/api/*": {"origins": "*", "supports_credentials": True}})
 
-    # Load configuration
-    app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-    app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
-    app.config['CHROMA_PERSIST_DIR'] = CHROMA_PERSIST_DIR
-    app.config['ALLOWED_EXTENSIONS'] = ALLOWED_EXTENSIONS
-    
-    # Load Secret Key from environment variable without hardcoded fallback
-    # If not present, in production an error will be raised
-    if 'SECRET_KEY' not in os.environ and os.environ.get('FLASK_ENV') == 'production':
-        raise RuntimeError("SECRET_KEY must be set in production environment")
-    
-    # In development mode, a random key can be generated
-    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+    # Proper CORS
+    CORS(app, origins=["http://localhost:5173"], supports_credentials=True)
 
-    app.config['NLP_MODEL'] = initialize_nlp()
+    # App config
+    app.config.update({
+        'UPLOAD_FOLDER': UPLOAD_FOLDER,
+        'MAX_CONTENT_LENGTH': MAX_CONTENT_LENGTH,
+        'CHROMA_PERSIST_DIR': CHROMA_PERSIST_DIR,
+        'ALLOWED_EXTENSIONS': ALLOWED_EXTENSIONS,
+        'SECRET_KEY': os.environ.get('SECRET_KEY', secrets.token_hex(32)),
+        'NLP_MODEL': initialize_nlp()
+    })
 
-    # Register Blueprints
+    # Register blueprints
     app.register_blueprint(documents_bp)
     app.register_blueprint(metadata_bp)
     app.register_blueprint(query_bp)
-    app.register_blueprint(auth_bp)  # Ensure auth_bp is registered
-    
-    # Start background services check
+    app.register_blueprint(auth_bp)
+
+    # Services
     background_executor.submit(check_embeddings)
-    
-    # Create default test user
+
+    # Optional test user
     from services.auth_service import AuthService
-    auth_service = AuthService()
-    
-    # Create a test user for development purposes
-    test_user_email = os.environ.get('VITE_TEST_USER_EMAIL', 'user@example.com')
-    test_user_password = os.environ.get('VITE_TEST_USER_PASSWORD', 'password123')
-    test_user_name = os.environ.get('VITE_TEST_USER_NAME', 'Test User')
-    
-    try:
-        # Check if test user exists
-        user = auth_service.get_user_by_email(test_user_email)
-        if not user:
-            logger.info(f"Creating test user: {test_user_email}")
-            auth_service.create_user(
-                email=test_user_email,
-                password=test_user_password,
-                name=test_user_name
-            )
-    except Exception as e:
-        logger.error(f"Error creating test user: {e}")
-        
-    # Root route for health check
+    auth = AuthService()
+    email = os.environ.get('VITE_TEST_USER_EMAIL', 'user@example.com')
+    if not auth.get_user_by_email(email):
+        auth.create_user(
+            email=email,
+            password=os.environ.get('VITE_TEST_USER_PASSWORD', 'password123'),
+            name=os.environ.get('VITE_TEST_USER_NAME', 'Test User')
+        )
+
+    # Routes
     @app.route('/')
-    def health_check():
-        return jsonify({
-            'status': 'ok', 
-            'version': '1.1.0',
-            'app': 'SciLit2.0 API'
-        })
-    
-    # Add streaming support endpoint
+    def health():
+        return jsonify({'status': 'ok', 'version': '1.1.0', 'app': 'SciLit2.0 API'})
+
     @app.route('/stream-test')
-    def stream_test():
+    def stream():
         def generate():
             for i in range(10):
                 yield f"data: {i}\n\n"
                 time.sleep(0.5)
         return Response(stream_with_context(generate()), content_type='text/event-stream')
-    
-    # Error handling routes
+
+    # Error handlers
     @app.errorhandler(404)
-    def not_found(e):
-        return jsonify({"error": "Resource not found"}), 404
-    
+    def not_found(e): return jsonify({"error": "Resource not found"}), 404
+
+    @app.errorhandler(413)
+    def too_large(e): return jsonify({"error": f"File too large. Max: {MAX_CONTENT_LENGTH / (1024 * 1024)}MB"}), 413
+
     @app.errorhandler(500)
     def server_error(e):
-        logger.error(f"Server error: {e}")
+        logger.error(f"Internal server error: {e}")
         return jsonify({"error": "Internal server error"}), 500
-    
-    @app.errorhandler(413)
-    def too_large(e):
-        return jsonify({"error": f"File too large. Maximum size: {MAX_CONTENT_LENGTH/(1024*1024)}MB"}), 413
-    
-    # Request handling hooks
-    @app.before_request
-    def before_request():
-        g.start_time = time.time()
-    
-    @app.after_request
-    def after_request(response):
-        # Add CORS headers to all responses
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-        
-        if hasattr(g, 'start_time'):
-            elapsed = time.time() - g.start_time
-            logger.info(f"Request processed in {elapsed:.4f}s")
-        return response
-    
-  
 
-    # Shutdown hook to clean up resources
+    @app.before_request
+    def before():
+        g.start_time = time.time()
+
+    @app.after_request
+    def after(response):
+        if hasattr(g, 'start_time'):
+            logger.info(f"Request took {time.time() - g.start_time:.4f}s")
+        return response
+
     @app.teardown_appcontext
-    def teardown_resources(exception):
-        # Graceful shutdown for all Thread Pools
+    def shutdown(_):
         try:
-            logger.info("Shutting down resources...")
-            
-            # Zugriff auf den Executor mit Importprüfung
+            logger.info("Shutting down executors...")
             try:
-                from api.documents import get_executor
                 executor = get_executor()
-                if hasattr(executor, 'shutdown'):
+                if executor and hasattr(executor, 'shutdown'):
                     executor.shutdown(wait=False)
-                    logger.info("Documents executor shut down successfully")
-            except (ImportError, AttributeError) as e:
-                logger.error(f"Error accessing document executor: {e}")
-                
-            # Hintergrund-Executor
-            try:
-                if 'background_executor' in globals() and background_executor is not None:
-                    if hasattr(background_executor, 'shutdown'):
-                        background_executor.shutdown(wait=False)
-                        logger.info("Background executor shut down successfully")
+                    logger.info("Main executor shut down")
             except Exception as e:
-                logger.error(f"Error shutting down background executor: {e}")
-                
+                logger.warning(f"Executor shutdown failed: {e}")
+
+            if background_executor:
+                background_executor.shutdown(wait=False)
+                logger.info("Background executor shut down")
         except Exception as e:
-            logger.error(f"Error during teardown: {e}")
-    
+            logger.error(f"Global teardown failed: {e}")
+
     return app
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    host = os.environ.get('HOST', '0.0.0.0')
-    debug = os.environ.get('DEBUG', 'True').lower() == 'true'
-    
     app = create_app()
-    app.run(host=host, port=port, debug=debug)
+    app.run(
+        host=os.environ.get('HOST', '0.0.0.0'),
+        port=int(os.environ.get('PORT', 5000)),
+        debug=os.environ.get('DEBUG', 'True').lower() == 'true'
+    )

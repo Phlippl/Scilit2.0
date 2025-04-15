@@ -2,41 +2,25 @@
 import apiClient from './client';
 import axios from 'axios';
 
-const DOCUMENTS_ENDPOINT = '/api/documents';
+const DOCUMENTS_ENDPOINT = '/documents'; // Kein doppeltes /api
 
-/**
- * Gets all documents for the current user
- * @returns {Promise<Array>} List of documents
- */
 export const getDocuments = async () => {
   try {
     const response = await apiClient.get(DOCUMENTS_ENDPOINT);
     return response.data;
   } catch (error) {
     console.error('Error fetching documents:', error);
-    throw error.response?.data || { 
-      message: 'Failed to retrieve documents' 
-    };
+    throw error.response?.data || { message: 'Failed to retrieve documents' };
   }
 };
 
-/**
- * Gets the processing status of a document
- * 
- * @param {string} id - Document ID
- * @returns {Promise<Object>} Processing status information
- */
 export const getDocumentStatus = async (id) => {
   try {
     const response = await apiClient.get(`${DOCUMENTS_ENDPOINT}/status/${id}`);
     return response.data;
   } catch (error) {
     console.error(`Error fetching document status for ID ${id}:`, error);
-    const errorMessage = error.response?.data?.error || 
-                         error.response?.data?.message || 
-                         error.message || 
-                         'Unknown error';
-                         
+    const errorMessage = error.response?.data?.error || error.response?.data?.message || error.message || 'Unknown error';
     throw {
       status: "error",
       message: errorMessage,
@@ -45,134 +29,79 @@ export const getDocumentStatus = async (id) => {
   }
 };
 
-/**
- * Gets a specific document by ID
- * @param {string} id - Document ID
- * @returns {Promise<Object>} Document data
- */
 export const getDocumentById = async (id) => {
   try {
     const response = await apiClient.get(`${DOCUMENTS_ENDPOINT}/${id}`);
     return response.data;
   } catch (error) {
     console.error(`Error fetching document (ID: ${id}):`, error);
-    throw error.response?.data || { 
-      message: 'Failed to retrieve document' 
-    };
+    throw error.response?.data || { message: 'Failed to retrieve document' };
   }
 };
 
-/**
- * Saves a new document with metadata and file content
- * 
- * @param {Object} documentData - Document data with metadata
- * @param {File} [file] - Optional PDF file (if not already included in documentData)
- * @returns {Promise<Object>} Saved document with ID
- */
 export const saveDocument = async (documentData, file = null) => {
   try {
     let data = documentData;
     let headers = {};
-    
-    // If a separate file was passed, create FormData
+
     if (file) {
       const formData = new FormData();
       formData.append('file', file);
-      
-      // Ensure key metadata fields are directly in FormData
       formData.append('title', documentData.title || '');
       formData.append('type', documentData.type || 'article');
-      
-      // Add authors as JSON string if available
+
       if (documentData.authors && documentData.authors.length > 0) {
         formData.append('authors', JSON.stringify(documentData.authors));
       }
-      
-      // Add complete documentData as JSON string
+
       formData.append('data', JSON.stringify(documentData));
-      
       data = formData;
-      // Let axios set the content type with boundary
-      headers = {
-        'Content-Type': 'multipart/form-data'
-      };
+      headers = { 'Content-Type': 'multipart/form-data' };
     }
-    
+
     const response = await apiClient.post(DOCUMENTS_ENDPOINT, data, { headers });
-    
     return response.data;
   } catch (error) {
     console.error('Error saving document:', error);
-    throw error.response?.data || { 
-      message: 'Failed to save document' 
-    };
+    throw error.response?.data || { message: 'Failed to save document' };
   }
 };
 
-/**
- * Updates an existing document
- * 
- * @param {string} id - Document ID to update
- * @param {Object} documentData - Updated document data
- * @returns {Promise<Object>} Updated document
- */
 export const updateDocument = async (id, documentData) => {
   try {
     const response = await apiClient.put(`${DOCUMENTS_ENDPOINT}/${id}`, documentData);
     return response.data;
   } catch (error) {
     console.error(`Error updating document (ID: ${id}):`, error);
-    throw error.response?.data || { 
-      message: 'Failed to update document' 
-    };
+    throw error.response?.data || { message: 'Failed to update document' };
   }
 };
 
-/**
- * Deletes a document
- * 
- * @param {string} id - Document ID to delete
- * @returns {Promise<boolean>} Success status
- */
 export const deleteDocument = async (id) => {
   try {
     await apiClient.delete(`${DOCUMENTS_ENDPOINT}/${id}`);
     return true;
   } catch (error) {
     console.error(`Error deleting document (ID: ${id}):`, error);
-    throw error.response?.data || { 
-      message: 'Failed to delete document' 
-    };
+    throw error.response?.data || { message: 'Failed to delete document' };
   }
 };
 
-/**
- * Analyzes a document without saving it to get metadata and chunks
- * 
- * @param {FormData} formData - Form data with file and settings
- * @param {Function} progressCallback - Optional callback for progress updates
- * @returns {Promise<Object>} Analysis results with metadata and chunks
- */
 export const analyzeDocument = async (formData, progressCallback = null) => {
   try {
-    // Create a custom axios instance for this request to handle progress
     const axiosInstance = axios.create({
-      // Das Problem ist hier - die baseURL wird doppelt verwendet
-      // baseURL: apiClient.defaults.baseURL,
-      baseURL: '/api', // Korrigierte Version
+      baseURL: 'http://localhost:5000',
       headers: {
         ...apiClient.defaults.headers,
         'Content-Type': 'multipart/form-data'
       }
     });
 
-    // Add the authorization header if available
     const token = localStorage.getItem('auth_token');
     if (token) {
       axiosInstance.defaults.headers.Authorization = `Bearer ${token}`;
     }
 
-    // Add progress tracking if a callback is provided
     if (progressCallback) {
       axiosInstance.defaults.onUploadProgress = (progressEvent) => {
         const uploadProgress = Math.round((progressEvent.loaded * 30) / progressEvent.total);
@@ -180,29 +109,23 @@ export const analyzeDocument = async (formData, progressCallback = null) => {
       };
     }
 
-    // Die URL sollte jetzt korrekt sein: /api/documents/analyze
-    const response = await axiosInstance.post(`/documents/analyze`, formData);
-    
-    // Track progress for processing phase
+    const response = await axiosInstance.post(`/api/documents/analyze`, formData);
+
     if (response.data.jobId && progressCallback) {
-      // Start polling for analysis status
       let completed = false;
       let attempt = 0;
-      
-      while (!completed && attempt < 30) { // Max 30 attempts (5 minutes with 10s interval)
+
+      while (!completed && attempt < 30) {
         attempt++;
-        
-        // Wait before polling (start with 2s, then increase)
         await new Promise(resolve => setTimeout(resolve, Math.min(2000 + attempt * 500, 10000)));
-        
+
         try {
           const statusResponse = await apiClient.get(`${DOCUMENTS_ENDPOINT}/analyze/${response.data.jobId}`);
-          
+
           if (statusResponse.data.status === 'completed') {
             completed = true;
             return statusResponse.data.result;
           } else if (statusResponse.data.status === 'processing') {
-            // Update progress (30-90%)
             const processingProgress = 30 + Math.min(60, attempt * 2);
             progressCallback(statusResponse.data.message || 'Processing document...', processingProgress);
           } else if (statusResponse.data.status === 'error') {
@@ -210,19 +133,18 @@ export const analyzeDocument = async (formData, progressCallback = null) => {
           }
         } catch (pollError) {
           console.error('Error polling analysis status:', pollError);
-          // On network errors, continue polling
           if (pollError.message && pollError.message.includes('Network Error')) {
             continue;
           }
           throw pollError;
         }
       }
-      
+
       if (!completed) {
         throw new Error('Analysis timed out');
       }
     }
-    
+
     return response.data;
   } catch (error) {
     console.error('Error analyzing document:', error);
