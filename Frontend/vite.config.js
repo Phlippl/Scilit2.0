@@ -25,14 +25,16 @@ export default defineConfig({
     hmr: {
       overlay: true,
     },
-    // Enable proxy for API requests
+    // Enable proxy for API requests - fixed URL
     proxy: {
       '/api': {
         target: 'http://localhost:5000',
         changeOrigin: true,
         secure: false,
-        // Don't rewrite paths - backend already expects /api prefix
-        rewrite: (path) => path
+        // Fix double /api prefix issue by removing one
+        rewrite: (path) => {
+          return path.replace(/^\/api/, '');
+        }
       },
     },
   },

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Backend/app.py
 
 import os
@@ -120,8 +119,7 @@ def create_app():
     # Services
     background_executor.submit(check_embeddings)
 
-    # Create a test user if needed
-    @app.before_first_request
+    # Replace @app.before_first_request with function to create test user
     def create_test_user():
         from services.auth_service import AuthService
         auth = AuthService()
@@ -132,6 +130,10 @@ def create_app():
                 password=os.environ.get('VITE_TEST_USER_PASSWORD', 'password123'),
                 name=os.environ.get('VITE_TEST_USER_NAME', 'Test User')
             )
+    
+    # Call it during app creation
+    with app.app_context():
+        create_test_user()
 
     # Routes
     @app.route('/')

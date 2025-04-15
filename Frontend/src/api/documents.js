@@ -1,7 +1,7 @@
 // src/api/documents.js
 import apiClient from './client';
 
-const DOCUMENTS_ENDPOINT = '/api/documents'; // Corrected path with /api prefix
+const DOCUMENTS_ENDPOINT = '/documents'; // Corrected path without /api prefix
 
 export const getDocuments = async () => {
   try {

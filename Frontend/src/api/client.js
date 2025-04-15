@@ -3,8 +3,8 @@ import axios from 'axios';
 
 // Base API client with configuration
 const apiClient = axios.create({
-  // Use the correct base URL format - ensure it doesn't add double /api
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000',
+  // Use the API path with no double /api prefix
+  baseURL: '/api',
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
@@ -97,7 +97,7 @@ apiClient.interceptors.response.use(
       const originalRequest = error.config;
       
       // Prevent infinite loops (if the refresh request itself returns 401)
-      if (originalRequest.url.includes('/api/auth/refresh')) {
+      if (originalRequest.url.includes('/auth/refresh')) {
         localStorage.removeItem('auth_token');
         localStorage.removeItem('user_data');
         onRefreshError(error);
@@ -115,8 +115,8 @@ apiClient.interceptors.response.use(
             throw new Error("No token available");
           }
           
-          // Request to refresh token - use the complete path
-          const response = await axios.post(`${apiClient.defaults.baseURL}/api/auth/refresh`, {}, {
+          // Request to refresh token - use the correct path
+          const response = await axios.post(`/api/auth/refresh`, {}, {
             headers: {
               Authorization: `Bearer ${token}`
             }
