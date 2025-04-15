@@ -22,7 +22,16 @@ export const useDocuments = () => {
     
     try {
       const fetchedDocuments = await documentsApi.getDocuments();
-      setDocuments(fetchedDocuments);
+      
+      // Handle both array responses and object responses
+      if (Array.isArray(fetchedDocuments)) {
+        setDocuments(fetchedDocuments);
+      } else if (fetchedDocuments && typeof fetchedDocuments === 'object') {
+        // If API returns an object with a documents property
+        setDocuments(fetchedDocuments.documents || []);
+      } else {
+        setDocuments([]);
+      }
     } catch (err) {
       setError(err.message || 'Failed to fetch documents');
       console.error('Error fetching documents:', err);
@@ -68,7 +77,13 @@ export const useDocuments = () => {
       const newDocument = await documentsApi.saveDocument(documentData, file);
       
       // Update documents list with the new document
-      setDocuments(prev => [...prev, newDocument]);
+      setDocuments(prev => {
+        // If prev is not an array (shouldn't happen, but just in case)
+        if (!Array.isArray(prev)) {
+          return [newDocument];
+        }
+        return [...prev, newDocument];
+      });
       
       return newDocument;
     } catch (err) {
@@ -97,9 +112,13 @@ export const useDocuments = () => {
       const updatedDocument = await documentsApi.updateDocument(id, documentData);
       
       // Update documents list with the updated document
-      setDocuments(prev => 
-        prev.map(doc => doc.id === id ? updatedDocument : doc)
-      );
+      setDocuments(prev => {
+        // If prev is not an array (shouldn't happen, but just in case)
+        if (!Array.isArray(prev)) {
+          return [updatedDocument];
+        }
+        return prev.map(doc => doc.id === id ? updatedDocument : doc);
+      });
       
       // Update selected document if it's the one being updated
       if (selectedDocument && selectedDocument.id === id) {
@@ -133,7 +152,13 @@ export const useDocuments = () => {
       
       if (success) {
         // Remove document from the list
-        setDocuments(prev => prev.filter(doc => doc.id !== id));
+        setDocuments(prev => {
+          // If prev is not an array (shouldn't happen, but just in case)
+          if (!Array.isArray(prev)) {
+            return [];
+          }
+          return prev.filter(doc => doc.id !== id);
+        });
         
         // Reset selected document if it's the one being deleted
         if (selectedDocument && selectedDocument.id === id) {
@@ -151,6 +176,51 @@ export const useDocuments = () => {
     }
   }, [selectedDocument]);
   
+  /**
+   * Analyze a document without saving
+   * 
+   * @param {Object} documentData - Document data
+   * @param {File} file - PDF file
+   * @param {Function} progressCallback - Optional progress callback
+   * @returns {Promise<Object>} Analysis results
+   */
+  const analyzeDocument = useCallback(async (documentData, file, progressCallback) => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('data', JSON.stringify(documentData));
+      
+      const result = await documentsApi.analyzeDocument(formData, progressCallback);
+      return result;
+    } catch (err) {
+      setError(err.message || 'Failed to analyze document');
+      console.error('Error analyzing document:', err);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+  
+  /**
+   * Check document processing status
+   * 
+   * @param {string} id - Document ID to check
+   * @returns {Promise<Object>} Processing status
+   */
+  const checkDocumentStatus = useCallback(async (id) => {
+    if (!id) return null;
+    
+    try {
+      return await documentsApi.getDocumentStatus(id);
+    } catch (err) {
+      console.error(`Error checking document status for ID ${id}:`, err);
+      throw err;
+    }
+  }, []);
+  
   // Load documents on first mount
   useEffect(() => {
     fetchDocuments();
@@ -166,6 +236,8 @@ export const useDocuments = () => {
     createDocument,
     updateDocument,
     deleteDocument,
+    analyzeDocument,
+    checkDocumentStatus,
     setSelectedDocument
   };
 };

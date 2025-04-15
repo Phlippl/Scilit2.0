@@ -96,8 +96,22 @@ export const AuthProvider = ({ children }) => {
             // Set up token refresh timer whenever authenticated
             setupRefreshTimer();
           } else {
-            // Clear potentially invalid auth data
-            handleLogout(false);
+            // Try to get user data from server
+            try {
+              const currentUserData = await authApi.getCurrentUser();
+              if (currentUserData) {
+                localStorage.setItem('user_data', JSON.stringify(currentUserData));
+                setUser(currentUserData);
+                setIsAuthenticated(true);
+                setupRefreshTimer();
+              } else {
+                // Clear potentially invalid auth data
+                handleLogout(false);
+              }
+            } catch (fetchError) {
+              console.error('Error fetching current user:', fetchError);
+              handleLogout(false);
+            }
             setLoading(false);
           }
         } else {
@@ -165,7 +179,7 @@ export const AuthProvider = ({ children }) => {
   /**
    * Handle login
    */
-  const handleLogin = useCallback(async (credentials) => {
+  const login = useCallback(async (credentials) => {
     setLoading(true);
     setError(null);
     
@@ -187,7 +201,7 @@ export const AuthProvider = ({ children }) => {
       
       return response.user;
     } catch (err) {
-      const errorMessage = err.response?.data?.message || err.message || 'Login failed';
+      const errorMessage = err.response?.data?.error || err.message || 'Login failed';
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
@@ -198,7 +212,7 @@ export const AuthProvider = ({ children }) => {
   /**
    * Handle registration
    */
-  const handleRegister = useCallback(async (userData) => {
+  const register = useCallback(async (userData) => {
     setLoading(true);
     setError(null);
     
@@ -206,21 +220,28 @@ export const AuthProvider = ({ children }) => {
       // Regular registration flow
       const response = await authApi.register(userData);
       
-      // Auto login after successful registration
-      await handleLogin({
-        email: userData.email,
-        password: userData.password
-      });
+      // Store token and user data
+      localStorage.setItem('auth_token', response.token);
+      localStorage.setItem('user_data', JSON.stringify(response.user));
       
-      return response;
+      // Set Axios default header for subsequent requests
+      apiClient.defaults.headers.common.Authorization = `Bearer ${response.token}`;
+      
+      setUser(response.user);
+      setIsAuthenticated(true);
+      
+      // Set up refresh timer
+      setupRefreshTimer();
+      
+      return response.user;
     } catch (err) {
-      const errorMessage = err.response?.data?.message || err.message || 'Registration failed';
+      const errorMessage = err.response?.data?.error || err.message || 'Registration failed';
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
       setLoading(false);
     }
-  }, [handleLogin]);
+  }, [setupRefreshTimer]);
 
   /**
    * Update user data
@@ -239,8 +260,8 @@ export const AuthProvider = ({ children }) => {
     isAuthenticated,
     loading,
     error,
-    login: handleLogin,
-    register: handleRegister,
+    login,
+    register,
     logout: handleLogout,
     refreshToken,
     updateUserData

@@ -4,10 +4,11 @@ import { Box, Paper, Typography, Alert, Snackbar, Stepper, Step, StepLabel } fro
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 
-// Services
+// Services and utilities
 import * as documentsApi from '../../api/documents';
 import * as metadataApi from '../../api/metadata';
 import { formatToISODate } from '../../utils/dateFormatter';
+import { detectDocumentType } from './MetadataForm';
 
 // Subcomponents
 import UploadArea from './upload/UploadArea';
@@ -28,7 +29,7 @@ const FullWidthContainer = ({ children }) => (
       marginLeft: '-45vw',
       marginRight: '-45vw',
       boxSizing: 'border-box',
-      px: { xs: 6, sm: 8 },
+      px: { xs: 2, sm: 8 },
       py: 2,
     }}
   >
@@ -37,7 +38,7 @@ const FullWidthContainer = ({ children }) => (
 );
 
 const FileUpload = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const navigate = useNavigate();
   const statusCheckInterval = 5000; // 5 seconds between status checks
   const maxStatusChecks = 60; // Max 5 minutes of polling (60 * 5s = 300s)
@@ -304,12 +305,20 @@ const FileUpload = () => {
         // Try DOI first
         if (result.metadata?.doi) {
           fetchedMetadata = await metadataApi.fetchDOIMetadata(result.metadata.doi);
+        } 
+        // Then try ISBN if DOI failed
+        else if (result.metadata?.isbn && !fetchedMetadata) {
+          // Note: Add ISBN metadata fetching implementation if needed
+          // fetchedMetadata = await metadataApi.fetchISBNMetadata(result.metadata.isbn);
         }
         
         if (fetchedMetadata) {
+          // Detect document type from metadata
+          const docType = detectDocumentType(fetchedMetadata);
+          
           setMetadata({
             ...fetchedMetadata,
-            type: fetchedMetadata.type || 'other'
+            type: docType || 'other'
           });
         } else {
           createEmptyMetadata(result.metadata);
@@ -335,8 +344,11 @@ const FileUpload = () => {
    * Create empty metadata structure with any extracted identifiers
    */
   const createEmptyMetadata = (extractedData = {}) => {
+    // Try to determine a title from the filename
+    const fileTitle = fileName ? fileName.replace(/\.pdf$/i, '') : '';
+    
     setMetadata({
-      title: '',
+      title: fileTitle,
       authors: [],
       publicationDate: '',
       publisher: '',
@@ -436,6 +448,8 @@ const FileUpload = () => {
       setError(errorMsg);
       setSnackbarOpen(true);
       setProcessingFailed(true);
+    } finally {
+      setProcessing(false);
     }
   };
   

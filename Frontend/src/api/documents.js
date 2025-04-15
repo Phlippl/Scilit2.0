@@ -2,7 +2,7 @@
 import apiClient from './client';
 import axios from 'axios';
 
-const DOCUMENTS_ENDPOINT = '/documents';
+const DOCUMENTS_ENDPOINT = '/api/documents';
 
 /**
  * Gets all documents for the current user
@@ -21,21 +21,21 @@ export const getDocuments = async () => {
 };
 
 /**
- * Ruft den Verarbeitungsstatus eines Dokuments ab
+ * Gets the processing status of a document
  * 
- * @param {string} id - Dokument-ID
- * @returns {Promise<Object>} Verarbeitungsstatus-Informationen
+ * @param {string} id - Document ID
+ * @returns {Promise<Object>} Processing status information
  */
 export const getDocumentStatus = async (id) => {
   try {
     const response = await apiClient.get(`${DOCUMENTS_ENDPOINT}/status/${id}`);
     return response.data;
   } catch (error) {
-    console.error(`Fehler beim Abrufen des Dokumentstatus für ID ${id}:`, error);
+    console.error(`Error fetching document status for ID ${id}:`, error);
     const errorMessage = error.response?.data?.error || 
                          error.response?.data?.message || 
                          error.message || 
-                         'Unbekannter Fehler';
+                         'Unknown error';
                          
     throw {
       status: "error",
@@ -62,7 +62,6 @@ export const getDocumentById = async (id) => {
   }
 };
 
-
 /**
  * Saves a new document with metadata and file content
  * 
@@ -80,16 +79,16 @@ export const saveDocument = async (documentData, file = null) => {
       const formData = new FormData();
       formData.append('file', file);
       
-      // Stelle sicher, dass wichtige Metadatenfelder direkt im FormData liegen
+      // Ensure key metadata fields are directly in FormData
       formData.append('title', documentData.title || '');
       formData.append('type', documentData.type || 'article');
       
-      // Füge Authors als JSON-String hinzu wenn vorhanden
+      // Add authors as JSON string if available
       if (documentData.authors && documentData.authors.length > 0) {
         formData.append('authors', JSON.stringify(documentData.authors));
       }
       
-      // Add documentData as JSON string
+      // Add complete documentData as JSON string
       formData.append('data', JSON.stringify(documentData));
       
       data = formData;
@@ -190,8 +189,8 @@ export const analyzeDocument = async (formData, progressCallback = null) => {
       while (!completed && attempt < 30) { // Max 30 attempts (5 minutes with 10s interval)
         attempt++;
         
-        // Wait 10 seconds between polls
-        await new Promise(resolve => setTimeout(resolve, 10000));
+        // Wait before polling (start with 2s, then increase)
+        await new Promise(resolve => setTimeout(resolve, Math.min(2000 + attempt * 500, 10000)));
         
         try {
           const statusResponse = await apiClient.get(`${DOCUMENTS_ENDPOINT}/analyze/${response.data.jobId}`);
@@ -209,7 +208,7 @@ export const analyzeDocument = async (formData, progressCallback = null) => {
         } catch (pollError) {
           console.error('Error polling analysis status:', pollError);
           // On network errors, continue polling
-          if (pollError.message.includes('Network Error')) {
+          if (pollError.message && pollError.message.includes('Network Error')) {
             continue;
           }
           throw pollError;
