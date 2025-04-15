@@ -18,10 +18,10 @@ import jwt
 import re
 
 # Import services
-from services.pdf_processor import PDFProcessor
-from services.vector_db import store_document_chunks, delete_document, get_or_create_collection
-from utils.helpers import allowed_file, extract_doi, extract_isbn, get_safe_filepath
-from utils.auth_middleware import optional_auth  # Import auth middleware
+from Backend.services.pdf_processor import PDFProcessor
+from Backend.services.vector_db import store_document_chunks, delete_document, get_or_create_collection
+from Backend.utils.helpers import allowed_file, extract_doi, extract_isbn, get_safe_filepath, timeout_handler
+from Backend.utils.auth_middleware import optional_auth  # Import auth middleware
 
 # Import metadata API for DOI/ISBN queries
 from api.metadata import fetch_metadata_from_crossref

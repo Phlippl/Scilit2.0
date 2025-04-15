@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, Union
 from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 try:
-    from services.ollama_embeddings import OllamaEmbeddingFunction
+    from Backend.services.ollama_embeddings import OllamaEmbeddingFunction
 except ImportError:
     # Handle different import paths (e.g., when running from another directory)
     try:

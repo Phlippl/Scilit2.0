@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 import concurrent.futures
 import secrets
 
-from utils.resource_monitor import resource_monitor
+
 import sys
 sys.dont_write_bytecode = True  # Prevents Python from creating .pyc files
 
@@ -226,7 +226,7 @@ def create_app():
             logger.info(f"Request processed in {elapsed:.4f}s")
         return response
     
-    resource_monitor.start()
+  
 
     # Shutdown hook to clean up resources
     @app.teardown_appcontext
@@ -253,15 +253,6 @@ def create_app():
                         logger.info("Background executor shut down successfully")
             except Exception as e:
                 logger.error(f"Error shutting down background executor: {e}")
-                
-            # Resource monitor stoppen
-            try:
-                if 'resource_monitor' in globals() and resource_monitor is not None:
-                    if hasattr(resource_monitor, 'stop'):
-                        resource_monitor.stop()
-                        logger.info("Resource monitor stopped successfully")
-            except Exception as e:
-                logger.error(f"Error stopping resource monitor: {e}")
                 
         except Exception as e:
             logger.error(f"Error during teardown: {e}")

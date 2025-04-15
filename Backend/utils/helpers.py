@@ -225,3 +225,66 @@ def format_metadata_for_storage(metadata: Dict[str, Any]) -> Dict[str, Any]:
             formatted[date_field] = normalize_date(metadata[date_field])
     
     return formatted
+
+# Zu Backend/utils/helpers.py oder einer neuen Datei utils/timeout.py hinzufügen
+import threading
+import time
+import signal
+import psutil
+import os
+import functools
+
+def timeout_handler(max_seconds=120, cpu_limit=70):
+    """
+    Decorator to limit function execution time and CPU usage
+    
+    Args:
+        max_seconds: Maximum execution time in seconds
+        cpu_limit: CPU usage limit in percent
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = [None]
+            error = [None]
+            
+            def target():
+                try:
+                    result[0] = func(*args, **kwargs)
+                except Exception as e:
+                    error[0] = e
+            
+            # Start function in a separate thread
+            thread = threading.Thread(target=target)
+            thread.daemon = True
+            thread.start()
+            
+            # Monitor execution time and CPU usage
+            start_time = time.time()
+            process = psutil.Process(os.getpid())
+            
+            while thread.is_alive():
+                thread.join(timeout=1.0)
+                elapsed = time.time() - start_time
+                
+                # Check time limit
+                if elapsed > max_seconds:
+                    error[0] = TimeoutError(f"Function execution exceeded {max_seconds} seconds")
+                    break
+                
+                # Check CPU usage
+                try:
+                    cpu_percent = process.cpu_percent(interval=0.5)
+                    if cpu_percent > cpu_limit:
+                        error[0] = Exception(f"CPU usage too high: {cpu_percent}% (limit: {cpu_limit}%)")
+                        break
+                except Exception:
+                    pass
+            
+            if error[0]:
+                raise error[0]
+            
+            return result[0]
+        
+        return wrapper
+    return decorator
