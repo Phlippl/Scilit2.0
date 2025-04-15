@@ -1,11 +1,7 @@
 // src/api/query.js
 import apiClient from './client';
-import mockService from '../utils/mockService';
 
 const QUERY_ENDPOINT = '/query';
-
-// Prüfen, ob der Testmodus aktiviert ist
-const testUserEnabled = import.meta.env.VITE_TEST_USER_ENABLED === 'true';
 
 /**
  * Queries documents with the given parameters
@@ -24,12 +20,6 @@ export const queryDocuments = async (queryParams) => {
     const response = await apiClient.post(QUERY_ENDPOINT, queryParams);
     return response.data;
   } catch (error) {
-    // Im Testmodus Mock-Daten zurückgeben
-    if (testUserEnabled && (error.isTestMode || error.code === 'ERR_NETWORK')) {
-      console.log('Using mock query processing');
-      return mockService.queryDocuments(queryParams);
-    }
-    
     console.error('Query execution error:', error);
     throw error.response?.data || { message: 'Query failed' };
   }
@@ -45,12 +35,6 @@ export const getSupportedCitationStyles = async () => {
     const response = await apiClient.get(`${QUERY_ENDPOINT}/citation-styles`);
     return response.data;
   } catch (error) {
-    // Im Testmodus Mock-Daten zurückgeben
-    if (testUserEnabled && (error.isTestMode || error.code === 'ERR_NETWORK')) {
-      console.log('Using mock citation styles');
-      return mockService.citationStyles;
-    }
-    
     console.error('Error fetching citation styles:', error);
     // Fallback to default styles if API fails
     return [
@@ -75,16 +59,6 @@ export const saveQuery = async (savedQuery) => {
     const response = await apiClient.post(`${QUERY_ENDPOINT}/save`, savedQuery);
     return response.data;
   } catch (error) {
-    // Im Testmodus Mock-Daten zurückgeben
-    if (testUserEnabled && (error.isTestMode || error.code === 'ERR_NETWORK')) {
-      console.log('Using mock query save');
-      return { 
-        ...savedQuery, 
-        id: `query-${Date.now()}`,
-        timestamp: new Date().toISOString()
-      };
-    }
-    
     console.error('Error saving query:', error);
     throw error.response?.data || { message: 'Failed to save query' };
   }
@@ -100,12 +74,6 @@ export const getSavedQueries = async () => {
     const response = await apiClient.get(`${QUERY_ENDPOINT}/saved`);
     return response.data;
   } catch (error) {
-    // Im Testmodus Mock-Daten zurückgeben
-    if (testUserEnabled && (error.isTestMode || error.code === 'ERR_NETWORK')) {
-      console.log('Using mock saved queries');
-      return []; // Leere Liste für Testzwecke
-    }
-    
     console.error('Error fetching saved queries:', error);
     throw error.response?.data || { message: 'Failed to retrieve saved queries' };
   }

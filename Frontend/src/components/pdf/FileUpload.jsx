@@ -306,11 +306,6 @@ const FileUpload = () => {
           fetchedMetadata = await metadataApi.fetchDOIMetadata(result.metadata.doi);
         }
         
-        // If DOI didn't work, try ISBN
-        if (!fetchedMetadata && result.metadata?.isbn) {
-          fetchedMetadata = await metadataApi.fetchISBNMetadata(result.metadata.isbn);
-        }
-        
         if (fetchedMetadata) {
           setMetadata({
             ...fetchedMetadata,

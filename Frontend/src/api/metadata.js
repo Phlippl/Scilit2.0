@@ -39,37 +39,6 @@ export const fetchDOIMetadata = async (doi) => {
 };
 
 /**
- * Ruft Metadaten anhand einer ISBN ab
- * 
- * @param {string} isbn - Die International Standard Book Number
- * @returns {Promise<Object>} - Promise mit Metadaten
- */
-export const fetchISBNMetadata = async (isbn) => {
-  try {
-    console.log(`Fetching ISBN metadata for: ${isbn}`);
-    
-    // Direkter CrossRef-Zugriff ohne Backend
-    const crossrefData = await searchByISBNFromCrossRef(isbn);
-    if (crossrefData && crossrefData.length > 0) {
-      return formatCrossRefMetadata(crossrefData[0]);
-    }
-    
-    // Falls der direkte Zugriff nicht funktioniert, versuche es über das Backend
-    try {
-      const response = await apiClient.get(`${API_URL}/isbn/${encodeURIComponent(isbn)}`);
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching ISBN metadata from backend:', error);
-      // Fehler vom direkten Zugriff weitergeben, wenn beides fehlschlägt
-      throw { message: 'ISBN-Metadaten konnten nicht abgerufen werden' };
-    }
-  } catch (error) {
-    console.error('Error fetching ISBN metadata:', error);
-    throw error.response?.data || { message: 'ISBN-Metadaten konnten nicht abgerufen werden' };
-  }
-};
-
-/**
  * Direkter Zugriff auf CrossRef für DOI-Metadaten (Fallback)
  * 
  * @param {string} doi - Die Digital Object Identifier
@@ -102,43 +71,6 @@ export const fetchDOIMetadataFromCrossRef = async (doi) => {
   } catch (error) {
     console.error('Error fetching DOI metadata from CrossRef:', error);
     return null;
-  }
-};
-
-/**
- * Direkter Zugriff auf CrossRef für ISBN-Suche (Fallback)
- * 
- * @param {string} isbn - Die International Standard Book Number
- * @returns {Promise<Array>} - Promise mit Suchergebnissen
- */
-export const searchByISBNFromCrossRef = async (isbn) => {
-  if (!isbn) return [];
-  
-  try {
-    // Bindestriche und Leerzeichen aus ISBN entfernen
-    const cleanISBN = isbn.replace(/[-\s]/g, '');
-    const url = `${CROSSREF_API_BASE_URL}/works?query=${cleanISBN}&filter=type:book&rows=5`;
-    
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': `SciLit2.0/1.0 (${CROSSREF_EMAIL})`,
-      }
-    });
-    
-    if (!response.ok) {
-      console.warn(`CrossRef API error: ${response.status}`);
-      return [];
-    }
-    
-    const data = await response.json();
-    
-    if (data && data.message && data.message.items) {
-      return data.message.items;
-    }
-    return [];
-  } catch (error) {
-    console.error('Error searching ISBN from CrossRef:', error);
-    return [];
   }
 };
 

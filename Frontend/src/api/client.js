@@ -1,12 +1,9 @@
 // src/api/client.js
 import axios from 'axios';
 
-// Test user config from environment variables
-const testUserEnabled = import.meta.env.VITE_TEST_USER_ENABLED === 'true';
-
 // Base API client with configuration
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api', // From environment variables or default
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api', 
   timeout: 30000, // 30 seconds timeout for long operations like PDF processing
   headers: {
     'Content-Type': 'application/json',
@@ -64,11 +61,6 @@ apiClient.interceptors.request.use(
     // Add request timestamp for timing metrics
     config.metadata = { startTime: new Date().getTime() };
     
-    // Debugging: Log outgoing requests in development
-    if (import.meta.env.DEV) {
-      console.log(`Request: ${config.method.toUpperCase()} ${config.url}`);
-    }
-    
     return config;
   },
   (error) => {
@@ -85,13 +77,6 @@ apiClient.interceptors.response.use(
       ? new Date().getTime() - response.config.metadata.startTime 
       : undefined;
     
-    // Debugging: Log successful responses in development
-    if (import.meta.env.DEV) {
-      console.log(`Response: ${response.status} ${response.config.url}${
-        requestDuration ? ` (${requestDuration}ms)` : ''
-      }`);
-    }
-    
     // Log slow requests
     if (requestDuration && requestDuration > 5000) {
       console.warn(`Slow request detected: ${response.config.url} took ${requestDuration}ms`);
@@ -102,18 +87,6 @@ apiClient.interceptors.response.use(
   async (error) => {
     // Create standardized error object for logging and handling
     const errorObj = createErrorObject(error);
-    
-    // Handle test user mode when API is not available
-    if (testUserEnabled && (!error.response || error.code === 'ERR_NETWORK')) {
-      console.warn('API not available, using test mode fallbacks');
-      
-      // Return with flag for test mode
-      return Promise.reject({
-        ...error,
-        isTestMode: true,
-        errorObj
-      });
-    }
     
     // Log detailed error information
     console.error('API Error:', errorObj);

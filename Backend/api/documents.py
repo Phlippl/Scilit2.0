@@ -1,6 +1,6 @@
 # Backend/api/documents.py
 """
-Blueprint for document management API endpoints with improved processing
+Blueprint for document management API endpoints
 """
 import os
 import json
@@ -14,8 +14,6 @@ import time
 import concurrent.futures
 from typing import Dict, List, Any, Optional, Union
 import threading
-import psutil
-from functools import wraps
 import jwt
 import re
 
@@ -78,184 +76,6 @@ def save_status_to_file(document_id, status_data):
         logger.error(f"Error saving status to file: {e}")
         return False
 
-
-# Add timeout decorator with fixed variable initialization
-def timeout_handler(max_seconds=600, cpu_limit=80):
-    """
-    Decorator to add timeout capability to a function
-    
-    Args:
-        max_seconds: Maximum execution time in seconds
-        cpu_limit: Maximum CPU usage percentage allowed
-    """
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Get document_id from args or kwargs
-            document_id = None
-            for arg in args:
-                if isinstance(arg, str) and len(arg) > 10:  # Likely a UUID
-                    document_id = arg
-                    break
-            if document_id is None and 'document_id' in kwargs:
-                document_id = kwargs['document_id']
-                
-            # Tracking variables
-            result = None
-            exception = None
-            process_terminated = False
-            process = psutil.Process()
-            start_time = time.time()
-            
-            # Variable for monitoring thread to signal termination
-            monitor_stop = threading.Event()
-            
-            # Function to monitor resource usage
-            def monitor_resources():
-                nonlocal process_terminated
-                consecutive_high_cpu_count = 0  # Initialize the counter
-                
-                while not monitor_stop.is_set() and time.time() - start_time < max_seconds and not process_terminated:
-                    try:
-                        # Check CPU usage (across all cores)
-                        cpu_percent = process.cpu_percent(interval=1)
-                        if cpu_percent > cpu_limit:
-                            consecutive_high_cpu_count += 1
-                        else:
-                            consecutive_high_cpu_count = 0
-                            
-                        # If CPU usage is too high for too long (5 consecutive checks)
-                        if consecutive_high_cpu_count >= 5:
-                            logger.warning(f"Process for document {document_id} terminated due to excessive CPU usage ({cpu_percent}%)")
-                            process_terminated = True
-                            break
-                            
-                        # Check if execution time exceeded
-                        if time.time() - start_time > max_seconds:
-                            logger.warning(f"Process for document {document_id} timed out after {max_seconds} seconds")
-                            process_terminated = True
-                            break
-                            
-                        time.sleep(2)  # Check every 2 seconds
-                    except Exception as e:
-                        logger.error(f"Error in resource monitor: {e}")
-                        break
-            
-            # Start monitoring thread
-            monitor_thread = threading.Thread(target=monitor_resources)
-            monitor_thread.daemon = True
-            monitor_thread.start()
-            
-            # Execute the function
-            try:
-                result = func(*args, **kwargs)
-            except Exception as e:
-                exception = e
-                
-            # Signal monitoring thread to stop
-            monitor_stop.set()
-            
-            # Update the process status if terminated
-            if process_terminated and document_id:
-                with processing_status_lock:
-                    processing_status[document_id] = {
-                        "status": "error",
-                        "progress": 0,
-                        "message": "Processing terminated due to excessive resource usage or timeout"
-                    }
-                    # Save status to file for persistence
-                    save_status_to_file(document_id, processing_status[document_id])
-            
-            # Wait for monitoring thread to finish
-            monitor_thread.join(timeout=5)
-            
-            # Propagate any exception
-            if exception:
-                raise exception
-                
-            return result
-        return wrapper
-    return decorator
-
-@documents_bp.route('/status/<document_id>', methods=['GET'])
-def get_document_status(document_id):
-    """Gets the processing status of a document with improved error handling"""
-    try:
-        # User authentication
-        user_id = request.headers.get('X-User-ID', 'default_user')
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            try:
-                secret_key = current_app.config['SECRET_KEY']
-                payload = jwt.decode(token, secret_key, algorithms=['HS256'])
-                user_id = payload.get('sub', user_id)
-            except Exception as e:
-                logger.warning(f"JWT decoding failed: {e}")
-        
-        # Check in-memory status first
-        with processing_status_lock:
-            if document_id in processing_status:
-                # Also save to file for persistence
-                save_status_to_file(document_id, processing_status[document_id])
-                return jsonify(processing_status[document_id])
-            
-        # If not in memory, check status file
-        status_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_status.json")
-        if os.path.exists(status_file):
-            try:
-                with open(status_file, 'r') as f:
-                    status_data = json.load(f)
-                return jsonify(status_data)
-            except Exception as e:
-                logger.error(f"Error reading status file: {e}")
-        
-        # Check metadata file to determine status
-        user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
-        metadata_files = list(Path(user_upload_dir).glob(f"{document_id}_*.json"))
-        
-        if not metadata_files:
-            return jsonify({"error": "Document not found"}), 404
-        
-        # Check metadata file to determine status
-        try:
-            with open(metadata_files[0], 'r') as f:
-                metadata = json.load(f)
-                
-            # If processing is flagged as complete
-            if metadata.get('processingComplete', False):
-                return jsonify({
-                    "status": "completed",
-                    "progress": 100,
-                    "message": "Document processing completed"
-                })
-            
-            # If processing failed
-            if metadata.get('processingError'):
-                return jsonify({
-                    "status": "error",
-                    "progress": 0,
-                    "message": metadata.get('processingError', 'Unknown error')
-                })
-        except Exception as e:
-            logger.error(f"Error reading metadata file for status: {e}")
-        
-        # If no status found, assume pending
-        return jsonify({
-            "status": "pending",
-            "progress": 0,
-            "message": "Document processing not started or status unknown"
-        })
-            
-    except Exception as e:
-        logger.error(f"Error retrieving status for document {document_id}: {e}")
-        return jsonify({
-            "status": "error", 
-            "message": f"Error retrieving status: {str(e)}"
-        }), 500
-
-# Apply the timeout decorator to the process_pdf_background function
-@timeout_handler(max_seconds=120, cpu_limit=50)  # 5 Minuten max, 70% CPU limit
 def process_pdf_background(filepath, document_id, metadata, settings):
     """
     Process PDF file in background thread with improved error handling
@@ -548,6 +368,83 @@ def process_pdf_background(filepath, document_id, metadata, settings):
             except Exception as metadata_err:
                 logger.error(f"Error saving error metadata for {document_id}: {metadata_err}")
 
+@documents_bp.route('/status/<document_id>', methods=['GET'])
+def get_document_status(document_id):
+    """Gets the processing status of a document with improved error handling"""
+    try:
+        # User authentication
+        user_id = request.headers.get('X-User-ID', 'default_user')
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            try:
+                secret_key = current_app.config['SECRET_KEY']
+                payload = jwt.decode(token, secret_key, algorithms=['HS256'])
+                user_id = payload.get('sub', user_id)
+            except Exception as e:
+                logger.warning(f"JWT decoding failed: {e}")
+        
+        # Check in-memory status first
+        with processing_status_lock:
+            if document_id in processing_status:
+                # Also save to file for persistence
+                save_status_to_file(document_id, processing_status[document_id])
+                return jsonify(processing_status[document_id])
+            
+        # If not in memory, check status file
+        status_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_status.json")
+        if os.path.exists(status_file):
+            try:
+                with open(status_file, 'r') as f:
+                    status_data = json.load(f)
+                return jsonify(status_data)
+            except Exception as e:
+                logger.error(f"Error reading status file: {e}")
+        
+        # Check metadata file to determine status
+        user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
+        metadata_files = list(Path(user_upload_dir).glob(f"{document_id}_*.json"))
+        
+        if not metadata_files:
+            return jsonify({"error": "Document not found"}), 404
+        
+        # Check metadata file to determine status
+        try:
+            with open(metadata_files[0], 'r') as f:
+                metadata = json.load(f)
+                
+            # If processing is flagged as complete
+            if metadata.get('processingComplete', False):
+                return jsonify({
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Document processing completed"
+                })
+            
+            # If processing failed
+            if metadata.get('processingError'):
+                return jsonify({
+                    "status": "error",
+                    "progress": 0,
+                    "message": metadata.get('processingError', 'Unknown error')
+                })
+        except Exception as e:
+            logger.error(f"Error reading metadata file for status: {e}")
+        
+        # If no status found, assume pending
+        return jsonify({
+            "status": "pending",
+            "progress": 0,
+            "message": "Document processing not started or status unknown"
+        })
+            
+    except Exception as e:
+        logger.error(f"Error retrieving status for document {document_id}: {e}")
+        return jsonify({
+            "status": "error", 
+            "message": f"Error retrieving status: {str(e)}"
+        }), 500
+
 @documents_bp.route('', methods=['GET'])
 def list_documents():
     """Get list of all documents"""
@@ -646,9 +543,6 @@ def validate_metadata(metadata):
     if not isinstance(metadata, dict):
         return False, "Metadata must be a dictionary"
     
-    # Debugging output
-    print(f"Validating metadata: {metadata}")
-    
     # Required fields validation
     required_fields = ['title', 'type']
     for field in required_fields:
@@ -731,10 +625,6 @@ def validate_metadata(metadata):
 def save_document():
     """Upload und Verarbeitung eines neuen Dokuments mit verbesserter Validierung"""
     try:
-        # Debugging
-        print("Request form data:", request.form)
-        print("Request files:", request.files)
-        
         # Prüfen, ob Datei oder Metadaten vorhanden sind
         if 'file' not in request.files and not request.form.get('data'):
             return jsonify({"error": "Keine Datei oder Daten bereitgestellt"}), 400
@@ -760,8 +650,6 @@ def save_document():
                     except:
                         pass  # Ignoriere Fehler beim authors-Parsing
                 
-                # Debugging
-                print("Parsed metadata:", metadata)
             except json.JSONDecodeError:
                 return jsonify({"error": "Ungültige JSON-Daten"}), 400
         
@@ -797,14 +685,6 @@ def save_document():
                 
             # Log für Debugging-Zwecke
             logger.info(f"Kein Authorization-Header gefunden. Verwendung von X-User-ID: {user_id}")
-        
-        # Für Testzwecke: Wenn Testmodus aktiviert ist und default_user verwendet wird, 
-        # verwenden wir einen speziellen Test-User
-        testUserEnabled = os.environ.get('VITE_TEST_USER_ENABLED', 'false').lower() == 'true'
-        if testUserEnabled and (user_id == 'default_user'):
-            test_user_id = os.environ.get('TEST_USER_ID', 'test-user-id')
-            logger.info(f"Verwende Test-Benutzer-ID: {test_user_id}")
-            user_id = test_user_id
         
         metadata['user_id'] = user_id
         
@@ -877,7 +757,6 @@ def save_document():
                 app = current_app._get_current_object()
                 
                 # Hintergrundverarbeitung starten
-                
                 get_executor().submit(
                     process_pdf_background,
                     filepath,
