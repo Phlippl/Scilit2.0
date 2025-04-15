@@ -1,7 +1,7 @@
 // src/api/documents.js
 import apiClient from './client';
 
-const DOCUMENTS_ENDPOINT = '/documents'; // Corrected path without /api prefix
+const DOCUMENTS_ENDPOINT = '/documents'; // Use without /api prefix since apiClient already includes it
 
 export const getDocuments = async () => {
   try {
@@ -88,6 +88,8 @@ export const deleteDocument = async (id) => {
 
 export const analyzeDocument = async (formData, progressCallback = null) => {
   try {
+    console.log("Sending analyze request to endpoint:", `${DOCUMENTS_ENDPOINT}/analyze`);
+    
     // Use the same apiClient for consistency
     const config = {
       headers: {

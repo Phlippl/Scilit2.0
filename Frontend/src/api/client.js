@@ -3,7 +3,7 @@ import axios from 'axios';
 
 // Base API client with configuration
 const apiClient = axios.create({
-  // Use the API path with no double /api prefix
+  // Use the correct base URL format - keep the /api prefix
   baseURL: '/api',
   timeout: 30000,
   headers: {
@@ -115,7 +115,7 @@ apiClient.interceptors.response.use(
             throw new Error("No token available");
           }
           
-          // Request to refresh token - use the correct path
+          // Request to refresh token - use the complete path
           const response = await axios.post(`/api/auth/refresh`, {}, {
             headers: {
               Authorization: `Bearer ${token}`

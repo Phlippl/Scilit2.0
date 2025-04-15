@@ -119,7 +119,7 @@ def create_app():
     # Services
     background_executor.submit(check_embeddings)
 
-    # Replace @app.before_first_request with function to create test user
+    # Create a test user on app startup (replacing before_first_request)
     def create_test_user():
         from services.auth_service import AuthService
         auth = AuthService()
@@ -131,7 +131,7 @@ def create_app():
                 name=os.environ.get('VITE_TEST_USER_NAME', 'Test User')
             )
     
-    # Call it during app creation
+    # Call it during app creation with app context
     with app.app_context():
         create_test_user()
 
