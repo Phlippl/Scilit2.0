@@ -157,7 +157,9 @@ export const analyzeDocument = async (formData, progressCallback = null) => {
   try {
     // Create a custom axios instance for this request to handle progress
     const axiosInstance = axios.create({
-      baseURL: apiClient.defaults.baseURL,
+      // Das Problem ist hier - die baseURL wird doppelt verwendet
+      // baseURL: apiClient.defaults.baseURL,
+      baseURL: '/api', // Korrigierte Version
       headers: {
         ...apiClient.defaults.headers,
         'Content-Type': 'multipart/form-data'
@@ -178,7 +180,8 @@ export const analyzeDocument = async (formData, progressCallback = null) => {
       };
     }
 
-    const response = await axiosInstance.post(`${DOCUMENTS_ENDPOINT}/analyze`, formData);
+    // Die URL sollte jetzt korrekt sein: /api/documents/analyze
+    const response = await axiosInstance.post(`/documents/analyze`, formData);
     
     // Track progress for processing phase
     if (response.data.jobId && progressCallback) {
