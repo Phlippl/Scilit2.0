@@ -18,14 +18,20 @@ import threading
 import jwt
 import re
 
-# Import services
+# Import utils and services
+from utils.helpers import allowed_file, extract_doi, extract_isbn, get_safe_filepath, timeout_handler
+from utils.auth_middleware import optional_auth, get_user_id
 from services.pdf_processor import PDFProcessor
 from services.vector_db import store_document_chunks, delete_document, get_or_create_collection
-from utils.helpers import allowed_file, extract_doi, extract_isbn, get_safe_filepath, timeout_handler
-from utils.auth_middleware import optional_auth  # Import auth middleware
 
-# Import metadata API for DOI/ISBN queries
-from api.metadata import fetch_metadata_from_crossref
+# Import metadata API for DOI/ISBN queries (optional)
+try:
+    from api.metadata import fetch_metadata_from_crossref
+except ImportError:
+    # Define fallback function
+    def fetch_metadata_from_crossref(doi):
+        logging.warning(f"Metadata API not available. Cannot fetch metadata for DOI: {doi}")
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -41,23 +47,23 @@ executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 def get_executor():
     """
-    Gibt den Thread-Pool-Executor zurück, erstellt ihn neu, wenn nötig
+    Returns the thread pool executor, creates a new one if needed
     
     Returns:
-        ThreadPoolExecutor: Der Thread-Pool-Executor für Hintergrundaufgaben
+        ThreadPoolExecutor: The thread pool executor for background tasks
     """
     global executor
     try:
-        # Prüfen, ob der Executor noch funktioniert
+        # Check if executor is still working
         executor.submit(lambda: None).result(timeout=0.1)
         return executor
     except Exception as e:
-        # Wenn Executor nicht funktioniert oder geschlossen wurde, einen neuen erstellen
-        logger.info(f"Erstelle neuen Executor wegen: {str(e)}")
+        # If executor is not working or closed, create a new one
+        logger.info(f"Creating new executor due to: {str(e)}")
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         return executor
 
-# In-memory processing status tracking (for real app, use Redis or database)
+# In-memory processing status tracking (would use Redis or database in production)
 processing_status = {}
 
 # Thread-safe storage for processing status
@@ -88,16 +94,17 @@ def process_pdf_background(filepath, document_id, metadata, settings):
         metadata: Document metadata
         settings: Processing settings
     """
-    from flask import current_app
+    # Import necessary modules for processing
     import gc
     gc.enable()  # Enable garbage collection
     
-    # Mit einem Anwendungskontext arbeiten
-    from app import create_app
-    app = create_app()
+    # Create app context for processing
+    from flask import current_app
+    app = current_app._get_current_object()
+    
     with app.app_context():
         # Set reasonable limits
-        max_file_size_mb = 20 #50  # Maximum file size to process in MB
+        max_file_size_mb = 20  # Maximum file size to process in MB
         
         try:
             # Check file size
@@ -309,7 +316,7 @@ def process_pdf_background(filepath, document_id, metadata, settings):
                 except Exception as write_err:
                     logger.error(f"Error saving error metadata: {write_err}")
             
-            # Hilfsfunktion für direkten Cleanup ohne Executor hinzufügen
+            # Cleanup function that works without executor
             def cleanup_status_direct(doc_id):
                 """Cleanup function that works without executor"""
                 with processing_status_lock:
@@ -325,13 +332,14 @@ def process_pdf_background(filepath, document_id, metadata, settings):
                         del processing_status[document_id]
             
             try:
-                if not executor._shutdown:  # Prüfen, ob der Executor noch aktiv ist
+                # Check if executor is still active
+                if not executor._shutdown:
                     executor.submit(cleanup_status)
                 else:
-                    # Alternative: Timer verwenden, wenn Executor bereits heruntergefahren ist
+                    # Alternative: Use timer if executor is already shut down
                     import threading
                     cleanup_timer = threading.Timer(600, lambda: cleanup_status_direct(document_id))
-                    cleanup_timer.daemon = True  # Daemon-Thread wird beendet, wenn das Hauptprogramm endet
+                    cleanup_timer.daemon = True  # Daemon thread ends when main program ends
                     cleanup_timer.start()
                     logger.info(f"Using Timer instead of Executor for cleanup of document {document_id}")
             except Exception as e:
@@ -375,16 +383,7 @@ def get_document_status(document_id):
     """Gets the processing status of a document with improved error handling"""
     try:
         # User authentication
-        user_id = request.headers.get('X-User-ID', 'default_user')
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            try:
-                secret_key = current_app.config['SECRET_KEY']
-                payload = jwt.decode(token, secret_key, algorithms=['HS256'])
-                user_id = payload.get('sub', user_id)
-            except Exception as e:
-                logger.warning(f"JWT decoding failed: {e}")
+        user_id = get_user_id()
         
         # Check in-memory status first
         with processing_status_lock:
@@ -451,17 +450,8 @@ def get_document_status(document_id):
 def list_documents():
     """Get list of all documents"""
     try:
-        # Authentication check
-        user_id = request.headers.get('X-User-ID', 'default_user')
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            try:
-                secret_key = current_app.config['SECRET_KEY']
-                payload = jwt.decode(token, secret_key, algorithms=['HS256'])
-                user_id = payload.get('sub', user_id)
-            except Exception as e:
-                logger.warning(f"JWT decoding failed: {e}")
+        # Get user ID
+        user_id = get_user_id()
         
         documents = []
         
@@ -499,17 +489,8 @@ def list_documents():
 def get_document(document_id):
     """Get specific document by ID"""
     try:
-        # Authentication
-        user_id = request.headers.get('X-User-ID', 'default_user')
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            try:
-                secret_key = current_app.config['SECRET_KEY']
-                payload = jwt.decode(token, secret_key, algorithms=['HS256'])
-                user_id = payload.get('sub', user_id)
-            except Exception as e:
-                logger.warning(f"JWT decoding failed: {e}")
+        # Get user ID
+        user_id = get_user_id()
         
         # Find metadata file
         user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
@@ -625,83 +606,61 @@ def validate_metadata(metadata):
 
 @documents_bp.route('', methods=['POST'])
 def save_document():
-    """Upload und Verarbeitung eines neuen Dokuments mit verbesserter Validierung"""
+    """Upload and process a new document with improved validation"""
     try:
-        # Prüfen, ob Datei oder Metadaten vorhanden sind
+        # Check if file or metadata is provided
         if 'file' not in request.files and not request.form.get('data'):
-            return jsonify({"error": "Keine Datei oder Daten bereitgestellt"}), 400
+            return jsonify({"error": "No file or data provided"}), 400
         
-        # Metadaten aus dem Formular extrahieren
+        # Extract metadata from form
         metadata = {}
         if 'data' in request.form:
             try:
                 metadata = json.loads(request.form.get('data', '{}'))
                 
-                # Prüfe, ob title direkt im request.form vorhanden ist (Fix)
+                # Check if title is directly in request.form (fix)
                 if 'title' in request.form and request.form['title']:
                     metadata['title'] = request.form['title']
                 
-                # Prüfe, ob type direkt im request.form vorhanden ist (Fix)
+                # Check if type is directly in request.form (fix)
                 if 'type' in request.form and request.form['type']:
                     metadata['type'] = request.form['type']
                 
-                # Prüfe, ob authors direkt im request.form vorhanden ist (Fix)
+                # Check if authors is directly in request.form (fix)
                 if 'authors' in request.form and request.form['authors']:
                     try:
                         metadata['authors'] = json.loads(request.form['authors'])
                     except:
-                        pass  # Ignoriere Fehler beim authors-Parsing
+                        pass  # Ignore errors when parsing authors
                 
             except json.JSONDecodeError:
-                return jsonify({"error": "Ungültige JSON-Daten"}), 400
+                return jsonify({"error": "Invalid JSON data"}), 400
         
-        # Metadatenvalidierung durchführen
+        # Validate metadata
         is_valid, error_message = validate_metadata(metadata)
         if not is_valid:
             return jsonify({"error": error_message}), 400
         
-        # Dokument-ID generieren, falls nicht vorhanden
+        # Generate document ID if not provided
         document_id = metadata.get('id', str(uuid.uuid4()))
         
-        # Benutzer-Authentifizierung: Zuerst über JWT, ansonsten Fallback über X-User-ID Header
-        user_id = 'default_user'
-        auth_header = request.headers.get('Authorization')
-        
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            
-            # Robustere Token-Validierung
-            if token and token.count('.') == 2:
-                try:
-                    secret_key = current_app.config['SECRET_KEY']
-                    payload = jwt.decode(token, secret_key, algorithms=['HS256'])
-                    user_id = payload.get('sub', user_id)
-                except Exception as e:
-                    logger.warning(f"JWT-Decodierung fehlgeschlagen: {e}")
-            else:
-                logger.warning(f"Ungültiges Token-Format: {token}")
-        else:
-            header_user_id = request.headers.get('X-User-ID')
-            if header_user_id:
-                user_id = header_user_id
-                
-            # Log für Debugging-Zwecke
-            logger.info(f"Kein Authorization-Header gefunden. Verwendung von X-User-ID: {user_id}")
+        # Get user ID
+        user_id = get_user_id()
         
         metadata['user_id'] = user_id
         
-        # Benutzer-spezifisches Upload-Verzeichnis erstellen
+        # Create user-specific upload directory
         user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
         os.makedirs(user_upload_dir, exist_ok=True)
         
-        # Wenn eine Datei hochgeladen wurde, verarbeite den Upload
+        # If file is uploaded, process it
         if 'file' in request.files:
             file = request.files['file']
             if file.filename == '':
-                return jsonify({"error": "Keine Datei ausgewählt"}), 400
+                return jsonify({"error": "No file selected"}), 400
             
             if not allowed_file(file.filename):
-                return jsonify({"error": "Dateityp nicht erlaubt. Nur PDF-Dateien werden akzeptiert."}), 400
+                return jsonify({"error": "File type not allowed. Only PDF files are accepted."}), 400
             
             filename = secure_filename(file.filename)
             filepath = os.path.join(user_upload_dir, f"{document_id}_{filename}")
@@ -709,10 +668,10 @@ def save_document():
             try:
                 file.save(filepath)
             except Exception as e:
-                logger.error(f"Fehler beim Speichern der Datei: {e}")
-                return jsonify({"error": f"Dateiupload fehlgeschlagen: {str(e)}"}), 500
+                logger.error(f"Error saving file: {e}")
+                return jsonify({"error": f"File upload failed: {str(e)}"}), 500
             
-            # Optional: Speichern der Dokument-Metadaten in einer Datenbank
+            # Optionally save document metadata to database
             try:
                 from services.document_db_service import DocumentDBService
                 doc_db_service = DocumentDBService()
@@ -728,13 +687,13 @@ def save_document():
                 )
                 
                 if not save_result:
-                    logger.warning(f"Dokument konnte nicht in Datenbank gespeichert werden für User: {user_id}")
+                    logger.warning(f"Document could not be saved to database for user: {user_id}")
             except Exception as e:
-                logger.warning(f"Fehler beim Speichern in der Datenbank: {e}")
-                # Falls die DB-Speicherung fehlschlägt, wird der Upload fortgesetzt
+                logger.warning(f"Error saving to database: {e}")
+                # Continue with upload even if DB save fails
             
             try:
-                # Verarbeitungseinstellungen aus den Metadaten extrahieren
+                # Extract processing settings from metadata
                 processing_settings = {
                     'maxPages': int(metadata.get('maxPages', 0)),
                     'performOCR': bool(metadata.get('performOCR', False)),
@@ -742,7 +701,7 @@ def save_document():
                     'chunkOverlap': int(metadata.get('chunkOverlap', 200))
                 }
                 
-                # Upload-spezifische Metadaten ergänzen
+                # Add upload-specific metadata
                 metadata['document_id'] = document_id
                 metadata['filename'] = filename
                 metadata['fileSize'] = os.path.getsize(filepath)
@@ -750,15 +709,15 @@ def save_document():
                 metadata['filePath'] = filepath
                 metadata['processingComplete'] = False
                 
-                # Initiale Metadaten in einer JSON-Datei speichern
+                # Save initial metadata to JSON file
                 metadata_path = f"{filepath}.json"
                 with open(metadata_path, 'w') as f:
                     json.dump(metadata, f, indent=2)
                 
-                # Mit App-Kontext ausführen
+                # Get current app object
                 app = current_app._get_current_object()
                 
-                # Hintergrundverarbeitung starten
+                # Start background processing
                 get_executor().submit(
                     process_pdf_background,
                     filepath,
@@ -767,16 +726,16 @@ def save_document():
                     processing_settings
                 )
                 
-                # Initialen Status speichern
+                # Save initial status
                 initial_status = {
                     "status": "processing",
                     "progress": 0,
-                    "message": "Dokumentupload abgeschlossen. Verarbeitung gestartet..."
+                    "message": "Document upload complete. Processing started..."
                 }
                 with processing_status_lock:
                     processing_status[document_id] = initial_status
                     
-                    # Status mit App-Kontext speichern
+                    # Save status with app context
                     with app.app_context():
                         save_status_to_file(document_id, initial_status)
                 
@@ -786,23 +745,23 @@ def save_document():
                 })
                 
             except Exception as e:
-                # Aufräumen im Fehlerfall
+                # Clean up on error
                 if os.path.exists(filepath):
                     os.unlink(filepath)
-                logger.error(f"Fehler bei der Verarbeitung des Dokuments: {e}")
-                return jsonify({"error": f"Fehler beim Verarbeiten des Dokuments: {str(e)}"}), 500
+                logger.error(f"Error processing document: {e}")
+                return jsonify({"error": f"Error processing document: {str(e)}"}), 500
         
-        # Fall: Es werden nur Metadaten-Updates durchgeführt (ohne Datei-Upload)
+        # If only metadata updates are being made (no file upload)
         else:
             try:
                 user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
                 files = list(Path(user_upload_dir).glob(f"{document_id}_*"))
                 if not files:
-                    return jsonify({"error": "Dokument nicht gefunden"}), 404
+                    return jsonify({"error": "Document not found"}), 404
                 
                 pdf_files = [f for f in files if f.suffix.lower() == '.pdf']
                 if not pdf_files:
-                    return jsonify({"error": "PDF-Datei nicht gefunden"}), 404
+                    return jsonify({"error": "PDF file not found"}), 404
                 
                 filepath = str(pdf_files[0])
                 metadata['document_id'] = document_id
@@ -983,8 +942,6 @@ def update_document(document_id):
         logger.error(f"Error updating document {document_id}: {e}")
         return jsonify({"error": f"Failed to update document: {str(e)}"}), 500
 
-# Backend/api/documents.py - Add these new endpoints
-
 @timeout_handler(max_seconds=120, cpu_limit=70)
 def analyze_document_background(filepath, document_id, settings):
     """
@@ -995,13 +952,12 @@ def analyze_document_background(filepath, document_id, settings):
         document_id: Document ID
         settings: Processing settings
     """
-    from flask import current_app
     import gc
     gc.enable()  # Enable garbage collection
     
     # Create app context
-    from app import create_app
-    app = create_app()
+    from flask import current_app
+    app = current_app._get_current_object()
     
     with app.app_context():
         try:

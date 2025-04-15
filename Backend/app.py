@@ -7,17 +7,10 @@ import time
 import threading
 import concurrent.futures
 import secrets
-import spacy
 import sys
 from flask import Flask, jsonify, g, Response, stream_with_context
 from flask_cors import CORS
 from dotenv import load_dotenv
-
-# Import blueprints
-from api.documents import documents_bp, get_executor
-from api.metadata import metadata_bp
-from api.query import query_bp
-from api.auth import auth_bp
 
 # Prevent .pyc files
 sys.dont_write_bytecode = True
@@ -46,25 +39,32 @@ ALLOWED_EXTENSIONS = {'pdf'}
 background_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 def initialize_nlp():
+    """Initialize and return spaCy NLP model"""
     try:
-        nlp = spacy.load("de_core_news_sm")
-        logger.info("Loaded spaCy model: de_core_news_sm")
-        return nlp
-    except OSError:
+        import spacy
         try:
-            nlp = spacy.load("en_core_web_sm")
-            logger.info("Loaded spaCy model: en_core_web_sm")
+            nlp = spacy.load("de_core_news_sm")
+            logger.info("Loaded spaCy model: de_core_news_sm")
             return nlp
         except OSError:
-            logger.warning("Downloading en_core_web_sm...")
             try:
-                spacy.cli.download("en_core_web_sm")
-                return spacy.load("en_core_web_sm")
-            except Exception as e:
-                logger.error(f"spaCy download failed: {e}")
-                return spacy.blank("en")
+                nlp = spacy.load("en_core_web_sm")
+                logger.info("Loaded spaCy model: en_core_web_sm")
+                return nlp
+            except OSError:
+                logger.warning("Downloading en_core_web_sm...")
+                try:
+                    spacy.cli.download("en_core_web_sm")
+                    return spacy.load("en_core_web_sm")
+                except Exception as e:
+                    logger.error(f"spaCy download failed: {e}")
+                    return spacy.blank("en")
+    except ImportError:
+        logger.warning("spaCy not available, using blank model")
+        return None
 
 def check_embeddings():
+    """Check if Ollama embeddings service is available"""
     try:
         import requests
         url = os.environ.get('OLLAMA_API_URL', 'http://localhost:11434')
@@ -77,6 +77,7 @@ def check_embeddings():
         logger.warning(f"Ollama check failed: {e}")
 
 def init_directories():
+    """Initialize required directories"""
     try:
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
         os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
@@ -87,11 +88,12 @@ def init_directories():
         logger.error(f"Directory init failed: {e}")
 
 def create_app():
+    """Create and configure the Flask application"""
     init_directories()
     app = Flask(__name__)
 
     # Proper CORS
-    CORS(app, origins=["http://localhost:5173"], supports_credentials=True)
+    CORS(app, origins=["http://localhost:5173", "http://localhost:5000"], supports_credentials=True)
 
     # App config
     app.config.update({
@@ -104,6 +106,12 @@ def create_app():
     })
 
     # Register blueprints
+    # Import blueprints here to avoid circular imports
+    from api.documents import documents_bp, get_executor
+    from api.metadata import metadata_bp
+    from api.query import query_bp
+    from api.auth import auth_bp
+    
     app.register_blueprint(documents_bp)
     app.register_blueprint(metadata_bp)
     app.register_blueprint(query_bp)
@@ -112,16 +120,18 @@ def create_app():
     # Services
     background_executor.submit(check_embeddings)
 
-    # Optional test user
-    from services.auth_service import AuthService
-    auth = AuthService()
-    email = os.environ.get('VITE_TEST_USER_EMAIL', 'user@example.com')
-    if not auth.get_user_by_email(email):
-        auth.create_user(
-            email=email,
-            password=os.environ.get('VITE_TEST_USER_PASSWORD', 'password123'),
-            name=os.environ.get('VITE_TEST_USER_NAME', 'Test User')
-        )
+    # Create a test user if needed
+    @app.before_first_request
+    def create_test_user():
+        from services.auth_service import AuthService
+        auth = AuthService()
+        email = os.environ.get('VITE_TEST_USER_EMAIL', 'user@example.com')
+        if not auth.get_user_by_email(email):
+            auth.create_user(
+                email=email,
+                password=os.environ.get('VITE_TEST_USER_PASSWORD', 'password123'),
+                name=os.environ.get('VITE_TEST_USER_NAME', 'Test User')
+            )
 
     # Routes
     @app.route('/')
@@ -138,10 +148,12 @@ def create_app():
 
     # Error handlers
     @app.errorhandler(404)
-    def not_found(e): return jsonify({"error": "Resource not found"}), 404
+    def not_found(e): 
+        return jsonify({"error": "Resource not found"}), 404
 
     @app.errorhandler(413)
-    def too_large(e): return jsonify({"error": f"File too large. Max: {MAX_CONTENT_LENGTH / (1024 * 1024)}MB"}), 413
+    def too_large(e): 
+        return jsonify({"error": f"File too large. Max: {MAX_CONTENT_LENGTH / (1024 * 1024)}MB"}), 413
 
     @app.errorhandler(500)
     def server_error(e):

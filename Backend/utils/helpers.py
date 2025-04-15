@@ -5,6 +5,10 @@ Various helper functions for the SciLit2.0 backend with centralized implementati
 import re
 import os
 import logging
+import threading
+import time
+import psutil
+import functools
 from flask import current_app
 from werkzeug.utils import secure_filename
 from typing import Optional, Dict, List, Any
@@ -225,14 +229,6 @@ def format_metadata_for_storage(metadata: Dict[str, Any]) -> Dict[str, Any]:
             formatted[date_field] = normalize_date(metadata[date_field])
     
     return formatted
-
-# Zu Backend/utils/helpers.py oder einer neuen Datei utils/timeout.py hinzufügen
-import threading
-import time
-import signal
-import psutil
-import os
-import functools
 
 def timeout_handler(max_seconds=120, cpu_limit=70):
     """

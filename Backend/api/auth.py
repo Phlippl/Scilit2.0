@@ -2,30 +2,30 @@ from flask import Blueprint, jsonify, request, current_app
 import logging
 import jwt
 import datetime
-from services.user_service import UserService
+from services.auth_service import AuthService
 
 logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
-# Instanz des UserService erstellen
-user_service = UserService()
+# Create UserService instance
+user_service = AuthService()
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
-    """Benutzer registrieren"""
+    """Register a new user"""
     if not request.is_json:
-        return jsonify({"error": "Anfrage muss JSON sein"}), 400
+        return jsonify({"error": "Request must be JSON"}), 400
     
     data = request.get_json()
     
-    # Pflichtfelder prüfen
+    # Check required fields
     required_fields = ['email', 'password', 'name']
     for field in required_fields:
         if field not in data or not data[field]:
-            return jsonify({"error": f"Feld '{field}' ist erforderlich"}), 400
+            return jsonify({"error": f"Field '{field}' is required"}), 400
     
-    # Benutzer erstellen
+    # Create user
     user, error = user_service.create_user(
         email=data['email'],
         password=data['password'],
@@ -35,7 +35,7 @@ def register():
     if error:
         return jsonify({"error": error}), 400
     
-    # JWT-Token erstellen
+    # Create JWT token
     secret_key = current_app.config['SECRET_KEY']
     token = jwt.encode({
         'sub': user['id'],
@@ -44,17 +44,9 @@ def register():
         'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)
     }, secret_key, algorithm='HS256')
     
-    # Token decodieren und überprüfen
-    try:
-        # Überprüfung des Token-Formats
-        if isinstance(token, bytes):
-            token = token.decode('utf-8')
-        
-        # Überprüfen, ob der Token drei Teile hat
-        if token.count('.') != 2:
-            logger.error(f"Fehler bei Token-Generierung: Falsches Format {token}")
-    except Exception as e:
-        logger.error(f"Fehler beim Überprüfen des generierten Tokens: {e}")
+    # Convert bytes to string if necessary
+    if isinstance(token, bytes):
+        token = token.decode('utf-8')
     
     return jsonify({
         "user": user,
@@ -63,38 +55,38 @@ def register():
 
 @auth_bp.route('/refresh', methods=['POST'])
 def refresh_token():
-    """Token aktualisieren ohne komplette Neuanmeldung"""
-    # Prüfen, ob ein Token vorhanden ist
+    """Refresh token without complete re-authentication"""
+    # Check if token exists
     auth_header = request.headers.get('Authorization')
     
     if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({"error": "Token erforderlich"}), 401
+        return jsonify({"error": "Token required"}), 401
     
     token = auth_header.split(' ')[1]
     
     try:
-        # Token dekodieren, auch wenn abgelaufen
+        # Decode token, even if expired
         secret_key = current_app.config['SECRET_KEY']
         
-        # Wichtig: Wir ignorieren das Ablaufdatum, um den Benutzer zu identifizieren
+        # Important: We ignore the expiration date to identify the user
         payload = jwt.decode(token, secret_key, algorithms=['HS256'], options={"verify_exp": False})
         
-        # Prüfen, ob der Benutzer noch existiert
+        # Check if user still exists
         user = user_service.get_user_by_email(payload['email'])
         
         if not user:
-            return jsonify({"error": "Benutzer nicht gefunden"}), 404
+            return jsonify({"error": "User not found"}), 404
         
-        # Neues Token erstellen
+        # Create new token
         new_token = jwt.encode({
             'sub': user['id'],
             'email': user['email'],
             'name': user['name'],
-            # Länger gültigen Token erstellen (7 Tage)
+            # Create a longer-lasting token (7 days)
             'exp': datetime.datetime.utcnow() + datetime.timedelta(days=7)
         }, secret_key, algorithm='HS256')
         
-        # Token decodieren und überprüfen
+        # Convert bytes to string if necessary
         if isinstance(new_token, bytes):
             new_token = new_token.decode('utf-8')
         
@@ -104,21 +96,21 @@ def refresh_token():
         })
         
     except jwt.InvalidTokenError:
-        return jsonify({"error": "Ungültiger Token"}), 401
+        return jsonify({"error": "Invalid token"}), 401
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
-    """Benutzer anmelden"""
+    """Log in a user"""
     if not request.is_json:
-        return jsonify({"error": "Anfrage muss JSON sein"}), 400
+        return jsonify({"error": "Request must be JSON"}), 400
     
     data = request.get_json()
     
-    # Pflichtfelder prüfen
+    # Check required fields
     if 'email' not in data or 'password' not in data:
-        return jsonify({"error": "E-Mail und Passwort sind erforderlich"}), 400
+        return jsonify({"error": "Email and password are required"}), 400
     
-    # Benutzer authentifizieren
+    # Authenticate user
     user, error = user_service.authenticate_user(
         email=data['email'],
         password=data['password']
@@ -127,7 +119,7 @@ def login():
     if error:
         return jsonify({"error": error}), 401
     
-    # JWT-Token erstellen
+    # Create JWT token
     secret_key = current_app.config['SECRET_KEY']
     token = jwt.encode({
         'sub': user['id'],
@@ -136,7 +128,7 @@ def login():
         'exp': datetime.datetime.utcnow() + datetime.timedelta(days=7)
     }, secret_key, algorithm='HS256')
     
-    # Token decodieren und überprüfen
+    # Convert bytes to string if necessary
     if isinstance(token, bytes):
         token = token.decode('utf-8')
     
@@ -147,49 +139,49 @@ def login():
 
 @auth_bp.route('/me', methods=['GET'])
 def get_current_user():
-    """Aktuell angemeldeten Benutzer abrufen"""
+    """Get current authenticated user"""
     auth_header = request.headers.get('Authorization')
     
     if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({"error": "Authentifizierung erforderlich"}), 401
+        return jsonify({"error": "Authentication required"}), 401
     
     token = auth_header.split(' ')[1]
     
-    # Robustere Token-Validierung
+    # More robust token validation
     if not token or token.count('.') != 2:
-        return jsonify({"error": "Ungültiger Token-Format"}), 401
+        return jsonify({"error": "Invalid token format"}), 401
     
     try:
-        # Token decodieren
+        # Decode token
         secret_key = current_app.config['SECRET_KEY']
         payload = jwt.decode(token, secret_key, algorithms=['HS256'])
         
-        # Benutzer abrufen
+        # Get user
         user = user_service.get_user_by_email(payload['email'])
         
         if not user:
-            return jsonify({"error": "Benutzer nicht gefunden"}), 404
+            return jsonify({"error": "User not found"}), 404
         
         return jsonify(user)
         
     except jwt.ExpiredSignatureError:
-        return jsonify({"error": "Token abgelaufen"}), 401
+        return jsonify({"error": "Token expired"}), 401
     except jwt.InvalidTokenError:
-        return jsonify({"error": "Ungültiger Token"}), 401
+        return jsonify({"error": "Invalid token"}), 401
     
 @auth_bp.route('/logout', methods=['POST'])
 def logout():
-    """Benutzer abmelden (Client löscht den Token)"""
+    """Log out user (client deletes token)"""
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({"error": "Authentifizierung erforderlich"}), 401
+        return jsonify({"error": "Authentication required"}), 401
 
     token = auth_header.split(' ')[1]
     
-    # Robustere Token-Validierung
+    # More robust token validation
     if not token or token.count('.') != 2:
-        return jsonify({"error": "Ungültiger Token-Format"}), 401
+        return jsonify({"error": "Invalid token format"}), 401
 
-    # In diesem einfachen Ansatz wird keine serverseitige Aktion ausgeführt.
-    # Der Client sollte den Token nach erfolgreicher Abmeldung löschen.
-    return jsonify({"message": "Erfolgreich ausgeloggt. Bitte Token auf Clientseite entfernen."}), 200
+    # In this simple approach, no server-side action is performed.
+    # The client should delete the token after successful logout.
+    return jsonify({"message": "Successfully logged out. Please remove token on client side."}), 200

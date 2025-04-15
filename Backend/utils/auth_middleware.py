@@ -37,7 +37,8 @@ def get_user_id():
         try:
             secret_key = current_app.config.get('SECRET_KEY')
             if not secret_key:
-                raise ValueError("SECRET_KEY not configured")
+                logger.warning("SECRET_KEY not configured")
+                return user_id
                 
             payload = jwt.decode(token, secret_key, algorithms=['HS256'])
             user_id = payload.get('sub', user_id)
@@ -78,6 +79,9 @@ def requires_auth(f):
         try:
             # Decode token
             secret_key = current_app.config.get('SECRET_KEY')
+            if not secret_key:
+                return jsonify({"error": "Server configuration error"}), 500
+                
             payload = jwt.decode(token, secret_key, algorithms=['HS256'])
             
             # Store user ID in Flask's g object for use in the view function
@@ -133,25 +137,3 @@ def is_admin(f):
         return f(*args, **kwargs)
     
     return decorated
-
-# Example usage in a Flask view:
-"""
-@app.route('/api/protected')
-@requires_auth
-def protected_endpoint():
-    # Access g.user_id here
-    return jsonify({"user_id": g.user_id})
-
-@app.route('/api/admin-only')
-@requires_auth
-@is_admin
-def admin_endpoint():
-    # Only admins can access this
-    return jsonify({"admin": True})
-
-@app.route('/api/public-with-auth')
-@optional_auth
-def public_endpoint():
-    # Everyone can access, but g.user_id is available if authenticated
-    return jsonify({"user_id": g.user_id})
-"""

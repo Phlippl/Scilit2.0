@@ -21,10 +21,6 @@ class AuthService:
         
         # Load users from persistent storage
         self.users = self._load_users()
-        
-        # Add a sample user for testing if no users exist
-        if not self.users:
-            self._create_sample_user()
     
     def _load_users(self):
         """Load users from JSON file"""
@@ -70,24 +66,6 @@ class AuthService:
         except Exception as e:
             logger.error(f"Error saving users data: {str(e)}")
             return False
-    
-    def _create_sample_user(self):
-        """Create a sample user for testing"""
-        sample_email = os.environ.get('VITE_TEST_USER_EMAIL', 'user@example.com')
-        sample_password = os.environ.get('VITE_TEST_USER_PASSWORD', 'password123')
-        sample_name = os.environ.get('VITE_TEST_USER_NAME', 'Test User')
-        
-        if sample_email not in self.users:
-            user, _ = self.create_user(
-                email=sample_email,
-                password=sample_password,
-                name=sample_name
-            )
-            
-            if user:
-                logger.info(f"Created sample user: {sample_email}")
-            else:
-                logger.error("Failed to create sample user")
     
     def _hash_password(self, password, salt=None):
         """Hash a password with a salt"""
@@ -176,7 +154,7 @@ class AuthService:
             stored_key = bytes.fromhex(user['password_hash'])
             
             # Check if the password hash matches
-            if key != stored_key:
+            if key.hex() != user['password_hash']:
                 return None, "Invalid email or password"
             
             # Update last login time

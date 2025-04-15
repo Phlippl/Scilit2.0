@@ -1,16 +1,10 @@
 import os
 import uuid
 import shutil
+import json
 from datetime import datetime
 from werkzeug.utils import secure_filename
-import PyPDF2
-import pytesseract
-from pdf2image import convert_from_path
 import logging
-
-# In a real application, this would use a database like MongoDB
-# For now, we'll use an in-memory dictionary for simplicity
-documents = {}
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -19,12 +13,14 @@ class DocumentService:
     """Service for handling document operations"""
     
     def __init__(self):
+        # In-memory storage for documents (replace with database in production)
+        self.documents = {}
         # Add a sample document for testing
         self._create_sample_documents()
     
     def _create_sample_documents(self):
         """Create sample documents for testing"""
-        if not documents:
+        if not self.documents:
             # Sample document 1
             self._add_sample_document(
                 user_email='user@example.com',
@@ -95,7 +91,7 @@ class DocumentService:
             })
         
         # Store document
-        documents[doc_id] = document
+        self.documents[doc_id] = document
     
     def allowed_file(self, filename):
         """Check if file extension is allowed"""
@@ -112,15 +108,24 @@ class DocumentService:
         return file_path
     
     def extract_text(self, file_path):
-        """Extract text from a PDF file using OCR if needed"""
+        """Extract text from a PDF file using PyPDF2 or fallback to OCR if needed"""
         try:
-            # First try to extract text directly
-            text = self._extract_text_direct(file_path)
+            # First try to extract text directly using PyPDF2
+            import PyPDF2
+            text = ""
+            try:
+                with open(file_path, 'rb') as f:
+                    pdf_reader = PyPDF2.PdfReader(f)
+                    for page_num in range(len(pdf_reader.pages)):
+                        text += pdf_reader.pages[page_num].extract_text() + "\n"
+            except Exception as e:
+                logger.error(f"Error in direct text extraction: {str(e)}")
+                return ""
             
             # If direct extraction yields little text, use OCR
             if len(text.strip()) < 100:
                 logger.info(f"Direct text extraction yielded minimal text, using OCR for {file_path}")
-                text = self._extract_text_ocr(file_path)
+                return self._extract_text_ocr(file_path)
             
             return text
         
@@ -128,23 +133,14 @@ class DocumentService:
             logger.error(f"Error extracting text from {file_path}: {str(e)}")
             return ""
     
-    def _extract_text_direct(self, file_path):
-        """Extract text directly from PDF without OCR"""
-        text = ""
-        try:
-            with open(file_path, 'rb') as f:
-                pdf_reader = PyPDF2.PdfReader(f)
-                for page_num in range(len(pdf_reader.pages)):
-                    text += pdf_reader.pages[page_num].extract_text() + "\n"
-            return text
-        except Exception as e:
-            logger.error(f"Error in direct text extraction: {str(e)}")
-            return ""
-    
     def _extract_text_ocr(self, file_path):
         """Extract text from PDF using OCR"""
         text = ""
         try:
+            # Import OCR libraries
+            from pdf2image import convert_from_path
+            import pytesseract
+            
             # Convert PDF to images
             images = convert_from_path(file_path)
             
@@ -154,8 +150,11 @@ class DocumentService:
                 text += f"Page {i+1}:\n{page_text}\n\n"
             
             return text
+        except ImportError as e:
+            logger.error(f"OCR dependencies not available: {e}")
+            return ""
         except Exception as e:
-            logger.error(f"Error in OCR text extraction: {str(e)}")
+            logger.error(f"Error in OCR text extraction: {e}")
             return ""
     
     def save_document_metadata(self, user_email, metadata):
@@ -190,7 +189,7 @@ class DocumentService:
             })
         
         # Store document
-        documents[doc_id] = document
+        self.documents[doc_id] = document
         
         return doc_id
     
@@ -211,7 +210,8 @@ class DocumentService:
         shutil.move(file_path, new_path)
         
         # Update document record with file path
-        documents[document_id]['file_path'] = new_path
+        if document_id in self.documents:
+            self.documents[document_id]['file_path'] = new_path
         
         return new_path
     
@@ -219,7 +219,7 @@ class DocumentService:
         """Get all documents for a user"""
         user_documents = []
         
-        for doc_id, document in documents.items():
+        for doc_id, document in self.documents.items():
             if document['user_email'] == user_email:
                 # Create a copy without the file path
                 doc_copy = document.copy()
@@ -230,7 +230,7 @@ class DocumentService:
     
     def get_document_by_id(self, document_id, user_email):
         """Get a document by ID and verify ownership"""
-        document = documents.get(document_id)
+        document = self.documents.get(document_id)
         
         if not document or document['user_email'] != user_email:
             return None
@@ -243,7 +243,7 @@ class DocumentService:
     
     def delete_document(self, document_id, user_email):
         """Delete a document and its file"""
-        document = documents.get(document_id)
+        document = self.documents.get(document_id)
         
         if not document or document['user_email'] != user_email:
             return False
@@ -256,6 +256,6 @@ class DocumentService:
                 logger.error(f"Error deleting file {document['file_path']}: {str(e)}")
         
         # Delete document from storage
-        documents.pop(document_id, None)
+        self.documents.pop(document_id, None)
         
         return True
