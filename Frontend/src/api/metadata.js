@@ -8,7 +8,7 @@ const CROSSREF_API_BASE_URL = 'https://api.crossref.org';
 const CROSSREF_EMAIL = import.meta.env.VITE_CROSSREF_EMAIL || 'your.email@example.com';
 
 /**
- * Fetches metadata using a DOI
+ * Fetches metadata using a DOI with improved error handling and logging
  * 
  * @param {string} doi - Digital Object Identifier
  * @returns {Promise<Object>} - Promise with metadata
@@ -42,7 +42,28 @@ export const fetchDOIMetadata = async (doi) => {
       return response.data;
     } catch (error) {
       console.error('[ERROR] Error fetching DOI metadata from backend:', error);
-      console.error('[ERROR] Response:', error.response?.data);
+      
+      // If backend fails, try one more direct access with different options
+      console.log("[DEBUG] Backend failed, trying alternative direct access");
+      try {
+        const alternateData = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, {
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': `SciLit2.0/1.0 (${CROSSREF_EMAIL})`,
+          }
+        });
+        
+        if (alternateData.ok) {
+          const jsonData = await alternateData.json();
+          if (jsonData && jsonData.message) {
+            console.log("[DEBUG] Successfully retrieved data via alternative method");
+            const formattedData = formatCrossRefMetadata(jsonData.message);
+            return formattedData;
+          }
+        }
+      } catch (altError) {
+        console.error('[ERROR] Alternative CrossRef access also failed:', altError);
+      }
       
       // Throw a more informative error
       throw { 
@@ -54,106 +75,6 @@ export const fetchDOIMetadata = async (doi) => {
   } catch (error) {
     console.error('[ERROR] Error in fetchDOIMetadata:', error);
     throw error.response?.data || { message: 'Could not retrieve DOI metadata' };
-  }
-};
-
-/**
- * Fetches metadata using an ISBN
- * 
- * @param {string} isbn - International Standard Book Number
- * @returns {Promise<Object>} - Promise with metadata
- */
-export const fetchISBNMetadata = async (isbn) => {
-  try {
-    console.log(`[DEBUG] fetchISBNMetadata() called with ISBN: ${isbn}`);
-    
-    if (!isbn) {
-      console.warn("[DEBUG] No ISBN provided to fetchISBNMetadata");
-      return null;
-    }
-    
-    // Remove hyphens and spaces for consistent format
-    const cleanIsbn = isbn.replace(/[-\s]/g, '');
-    console.log(`[DEBUG] Cleaned ISBN: ${cleanIsbn}`);
-    
-    // Try via backend
-    console.log(`[DEBUG] Making backend request to: ${API_URL}/isbn/${cleanIsbn}`);
-    const response = await apiClient.get(`${API_URL}/isbn/${cleanIsbn}`);
-    console.log("[DEBUG] Backend ISBN response:", response.data);
-    return response.data;
-  } catch (error) {
-    console.error('[ERROR] Error fetching ISBN metadata:', error);
-    console.error('[ERROR] Response:', error.response?.data);
-    
-    // Try alternate sources like OpenLibrary
-    try {
-      console.log("[DEBUG] Trying alternate source (OpenLibrary) for ISBN");
-      const openLibraryData = await fetchISBNFromOpenLibrary(isbn);
-      if (openLibraryData) {
-        return openLibraryData;
-      }
-    } catch (altError) {
-      console.error('[ERROR] Alternate ISBN source also failed:', altError);
-    }
-    
-    throw error.response?.data || { message: 'Could not retrieve ISBN metadata' };
-  }
-};
-
-/**
- * Tries to fetch ISBN data from OpenLibrary
- * 
- * @param {string} isbn - ISBN to lookup
- * @returns {Promise<Object>} - Metadata or null
- */
-export const fetchISBNFromOpenLibrary = async (isbn) => {
-  if (!isbn) return null;
-  
-  try {
-    const cleanIsbn = isbn.replace(/[-\s]/g, '');
-    console.log(`[DEBUG] Fetching from OpenLibrary for ISBN: ${cleanIsbn}`);
-    
-    const response = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${cleanIsbn}&format=json&jscmd=data`);
-    
-    if (!response.ok) {
-      console.warn(`[DEBUG] OpenLibrary response not OK: ${response.status}`);
-      return null;
-    }
-    
-    const data = await response.json();
-    console.log(`[DEBUG] OpenLibrary response:`, data);
-    
-    const key = `ISBN:${cleanIsbn}`;
-    if (!data[key]) {
-      console.warn("[DEBUG] ISBN not found in OpenLibrary response");
-      return null;
-    }
-    
-    const bookData = data[key];
-    
-    // Extract authors
-    const authors = [];
-    if (bookData.authors) {
-      for (const author of bookData.authors) {
-        authors.push({ name: author.name });
-      }
-    }
-    
-    // Format metadata
-    const metadata = {
-      title: bookData.title || '',
-      authors: authors,
-      publisher: bookData.publishers?.[0]?.name || '',
-      publicationDate: bookData.publish_date || '',
-      isbn: cleanIsbn,
-      type: 'book'
-    };
-    
-    console.log("[DEBUG] Formatted OpenLibrary metadata:", metadata);
-    return metadata;
-  } catch (error) {
-    console.error('[ERROR] Error fetching from OpenLibrary:', error);
-    return null;
   }
 };
 
@@ -174,6 +95,7 @@ export const fetchDOIMetadataFromCrossRef = async (doi) => {
     
     const response = await fetch(url, {
       headers: {
+        'Accept': 'application/json',
         'User-Agent': `SciLit2.0/1.0 (${CROSSREF_EMAIL})`,
       }
     });
@@ -200,7 +122,7 @@ export const fetchDOIMetadataFromCrossRef = async (doi) => {
 };
 
 /**
- * Formats CrossRef metadata into a standardized format
+ * Formats CrossRef metadata into a standardized format with improved processing
  * 
  * @param {Object} metadata - Raw metadata from CrossRef
  * @returns {Object} - Formatted metadata
@@ -306,8 +228,15 @@ export const formatCrossRefMetadata = (metadata) => {
         } else if (date.length === 2) {
           result.publicationDate = `${date[0]}-${date[1].toString().padStart(2, '0')}-01`;
         } else {
-          result.publicationDate = `${date[0]}-01-01`;
+          result.publicationDate = `${date[0]}`;
         }
+      }
+    }
+    // Fallback: look for created or issued date
+    else if (metadata.created && metadata.created['date-parts'] && metadata.created['date-parts'][0]) {
+      const date = metadata.created['date-parts'][0];
+      if (date.length >= 1) {
+        result.publicationDate = `${date[0]}`;
       }
     }
     
@@ -335,6 +264,49 @@ export const formatCrossRefMetadata = (metadata) => {
   } catch (error) {
     console.error('[ERROR] Error formatting CrossRef metadata:', error);
     return null;
+  }
+};
+
+/**
+ * Fetches metadata using an ISBN
+ * 
+ * @param {string} isbn - International Standard Book Number
+ * @returns {Promise<Object>} - Promise with metadata
+ */
+export const fetchISBNMetadata = async (isbn) => {
+  try {
+    console.log(`[DEBUG] fetchISBNMetadata() called with ISBN: ${isbn}`);
+    
+    if (!isbn) {
+      console.warn("[DEBUG] No ISBN provided to fetchISBNMetadata");
+      return null;
+    }
+    
+    // Remove hyphens and spaces for consistent format
+    const cleanIsbn = isbn.replace(/[-\s]/g, '');
+    console.log(`[DEBUG] Cleaned ISBN: ${cleanIsbn}`);
+    
+    // Try via backend
+    console.log(`[DEBUG] Making backend request to: ${API_URL}/isbn/${cleanIsbn}`);
+    const response = await apiClient.get(`${API_URL}/isbn/${cleanIsbn}`);
+    console.log("[DEBUG] Backend ISBN response:", response.data);
+    return response.data;
+  } catch (error) {
+    console.error('[ERROR] Error fetching ISBN metadata:', error);
+    console.error('[ERROR] Response:', error.response?.data);
+    
+    // Try alternate sources like OpenLibrary
+    try {
+      console.log("[DEBUG] Trying alternate source (OpenLibrary) for ISBN");
+      const openLibraryData = await fetchISBNFromOpenLibrary(isbn);
+      if (openLibraryData) {
+        return openLibraryData;
+      }
+    } catch (altError) {
+      console.error('[ERROR] Alternate ISBN source also failed:', altError);
+    }
+    
+    throw error.response?.data || { message: 'Could not retrieve ISBN metadata' };
   }
 };
 

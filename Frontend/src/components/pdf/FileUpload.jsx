@@ -279,213 +279,248 @@ const FileUpload = () => {
   };
 
   /**
-   * Schnelle Voranalyse der Datei (nur für DOI/ISBN)
-   */
-  const quickAnalyzeFile = async () => {
-    console.log("[DEBUG] Starting quickAnalyzeFile with file:", file ? file.name : "no file");
-    
-    if (!file) {
-      setError('Bitte wähle zuerst eine Datei aus');
-      setSnackbarOpen(true);
-      return;
-    }
+ * Schnelle Voranalyse der Datei (nur für DOI/ISBN)
+ */
+const quickAnalyzeFile = async () => {
+  console.log("[DEBUG] Starting quickAnalyzeFile with file:", file ? file.name : "no file");
+  
+  if (!file) {
+    setError('Bitte wähle zuerst eine Datei aus');
+    setSnackbarOpen(true);
+    return;
+  }
 
-    setProcessing(true);
-    setCurrentStep(1); // Zu Vorverarbeitungsschritt wechseln
-    setProcessingStage('Identifikatoren extrahieren...');
-    setProcessingProgress(10);
+  setProcessing(true);
+  setCurrentStep(1); // Zu Vorverarbeitungsschritt wechseln
+  setProcessingStage('Identifikatoren extrahieren...');
+  setProcessingProgress(10);
+  
+  try {
+    // Formular nur mit Datei und Einstellung für schnelle Analyse
+    const formData = new FormData();
+    formData.append('file', file);
     
-    try {
-      // Formular nur mit Datei und Einstellung für schnelle Analyse
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      const settingsData = {
-        quickScan: true,
-        maxPages: 10, // Nur die ersten 10 Seiten für DOI/ISBN durchsuchen
-        performOCR: settings.performOCR // OCR-Einstellung aus den Benutzereinstellungen übernehmen
-      };
-      
-      console.log("[DEBUG] Sending quick analyze request with settings:", settingsData);
-      formData.append('data', JSON.stringify(settingsData));
-      
-      // Anfrage an den Endpunkt für schnelle Analyse mit detaillierter Fehlerbehandlung
-      console.log("[DEBUG] Making quick-analyze fetch request");
-      const response = await fetch('/api/documents/quick-analyze', {
-        method: 'POST',
-        body: formData
-      });
-      
-      console.log("[DEBUG] Quick-analyze response status:", response.status);
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error("[ERROR] Server error response:", errorData);
-        throw new Error(errorData.error || `Server-Fehler: ${response.status}`);
-      }
-      
-      const result = await response.json();
-      console.log("[DEBUG] Quick-analyze result:", result);
-      
-      // Extrahierte Identifikatoren speichern
-      const extractedIds = {
-        doi: result.identifiers?.doi,
-        isbn: result.identifiers?.isbn
-      };
-      console.log("[DEBUG] Extracted identifiers:", extractedIds);
-      setExtractedIdentifiers(extractedIds);
-      
-      // Temporäre Dokument-ID für spätere Verarbeitung speichern
-      console.log("[DEBUG] Setting temp_id:", result.temp_id);
-      setTempDocumentId(result.temp_id);
-      
-      // Zusätzlicher Versuch, Metadaten direkt über API zu holen, falls im result nicht vorhanden
-      let enhancedMetadata = result.metadata || {};
-      
-      // Wenn DOI gefunden wurde, aber keine Metadaten zurückgegeben wurden, versuchen wir es direkt mit der API
-      if (extractedIds.doi && (!result.metadata || Object.keys(result.metadata).length === 0)) {
-        console.log("[DEBUG] No metadata in result but DOI found, trying to fetch directly");
-        const doiMetadata = await fetchDOIMetadata(extractedIds.doi);
-        if (doiMetadata) {
-          console.log("[DEBUG] Successfully fetched DOI metadata directly");
+    const settingsData = {
+      quickScan: true,
+      maxPages: 10, // Nur die ersten 10 Seiten für DOI/ISBN durchsuchen
+      performOCR: settings.performOCR // OCR-Einstellung aus den Benutzereinstellungen übernehmen
+    };
+    
+    console.log("[DEBUG] Sending quick analyze request with settings:", settingsData);
+    formData.append('data', JSON.stringify(settingsData));
+    
+    // Anfrage an den Endpunkt für schnelle Analyse mit detaillierter Fehlerbehandlung
+    console.log("[DEBUG] Making quick-analyze fetch request");
+    const response = await fetch('/api/documents/quick-analyze', {
+      method: 'POST',
+      body: formData
+    });
+    
+    console.log("[DEBUG] Quick-analyze response status:", response.status);
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("[ERROR] Server error response:", errorData);
+      throw new Error(errorData.error || `Server-Fehler: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log("[DEBUG] Quick-analyze result:", result);
+    
+    // Extrahierte Identifikatoren speichern
+    const extractedIds = {
+      doi: result.identifiers?.doi,
+      isbn: result.identifiers?.isbn
+    };
+    console.log("[DEBUG] Extracted identifiers:", extractedIds);
+    setExtractedIdentifiers(extractedIds);
+    
+    // Temporäre Dokument-ID für spätere Verarbeitung speichern
+    console.log("[DEBUG] Setting temp_id:", result.temp_id);
+    setTempDocumentId(result.temp_id);
+    
+    // Metadaten-Sammelobjekt initialisieren
+    let enhancedMetadata = result.metadata || {};
+    
+    // Expliziter Versuch, Metadaten über DOI abzurufen, falls DOI gefunden wurde
+    if (extractedIds.doi) {
+      try {
+        console.log(`[DEBUG] Directly fetching metadata for DOI: ${extractedIds.doi}`);
+        const doiMetadata = await metadataApi.fetchDOIMetadata(extractedIds.doi);
+        
+        if (doiMetadata && Object.keys(doiMetadata).length > 0) {
+          console.log("[DEBUG] Successfully fetched DOI metadata:", doiMetadata);
           enhancedMetadata = doiMetadata;
+          
+          // DOI und ISBN aus extractedIds übernehmen, wenn nicht in doiMetadata vorhanden
+          if (!enhancedMetadata.doi) enhancedMetadata.doi = extractedIds.doi;
+          if (!enhancedMetadata.isbn && extractedIds.isbn) enhancedMetadata.isbn = extractedIds.isbn;
+        } else {
+          console.warn("[DEBUG] Failed to get metadata from DOI API");
         }
+      } catch (doiError) {
+        console.error('[ERROR] Error fetching DOI metadata:', doiError);
       }
-      // Dasselbe für ISBN
-      else if (extractedIds.isbn && (!result.metadata || Object.keys(result.metadata).length === 0)) {
-        console.log("[DEBUG] No metadata in result but ISBN found, trying to fetch directly");
-        const isbnMetadata = await fetchISBNMetadata(extractedIds.isbn);
-        if (isbnMetadata) {
-          console.log("[DEBUG] Successfully fetched ISBN metadata directly");
+    }
+    // Wenn keine DOI-Metadaten gefunden wurden, aber ISBN vorhanden ist
+    else if (extractedIds.isbn) {
+      try {
+        console.log(`[DEBUG] Directly fetching metadata for ISBN: ${extractedIds.isbn}`);
+        const isbnMetadata = await metadataApi.fetchISBNMetadata(extractedIds.isbn);
+        
+        if (isbnMetadata && Object.keys(isbnMetadata).length > 0) {
+          console.log("[DEBUG] Successfully fetched ISBN metadata:", isbnMetadata);
           enhancedMetadata = isbnMetadata;
+          
+          // DOI und ISBN aus extractedIds übernehmen, wenn nicht in Metadaten vorhanden
+          if (!enhancedMetadata.doi && extractedIds.doi) enhancedMetadata.doi = extractedIds.doi;
+          if (!enhancedMetadata.isbn) enhancedMetadata.isbn = extractedIds.isbn;
+        } else {
+          console.warn("[DEBUG] Failed to get metadata from ISBN API");
         }
+      } catch (isbnError) {
+        console.error('[ERROR] Error fetching ISBN metadata:', isbnError);
+      }
+    }
+    
+    // Metadaten setzen und bearbeiten
+    if (enhancedMetadata && Object.keys(enhancedMetadata).length > 0) {
+      console.log("[DEBUG] Processing metadata:", enhancedMetadata);
+      
+      // Valid document types in our application
+      const validTypes = ['article', 'book', 'edited_book', 'conference', 'thesis', 
+                        'report', 'newspaper', 'website', 'interview', 'press', 'other'];
+      
+      // Mapping function similar to the one in metadata API
+      const typeMapping = {
+        'journal-article': 'article',
+        'book': 'book',
+        'book-chapter': 'book',
+        'monograph': 'book',
+        'edited-book': 'edited_book',
+        'proceedings-article': 'conference',
+        'proceedings': 'conference',
+        'conference-paper': 'conference',
+        'dissertation': 'thesis',
+        'report': 'report',
+        'report-component': 'report',
+        'journal': 'article',
+        'newspaper-article': 'newspaper',
+        'website': 'website',
+        'peer-review': 'article',
+        'standard': 'report',
+        'dataset': 'other',
+        'posted-content': 'other',
+        'reference-entry': 'other'
+      };
+      
+      // Sanitize the type
+      if (enhancedMetadata.type) {
+        if (!validTypes.includes(enhancedMetadata.type)) {
+          // Try to map the type
+          const mappedType = typeMapping[enhancedMetadata.type] || 
+                          (enhancedMetadata.type.includes('book') ? 'book' : 
+                          (enhancedMetadata.type.includes('journal') ? 'article' : 'other'));
+          
+          console.log(`[DEBUG] Sanitizing type from ${enhancedMetadata.type} to ${mappedType}`);
+          enhancedMetadata.type = mappedType;
+        }
+      } else {
+        // Set a default type if none exists
+        const detectedType = detectDocumentType(enhancedMetadata) || 'other';
+        console.log(`[DEBUG] No type specified, detected type: ${detectedType}`);
+        enhancedMetadata.type = detectedType;
       }
       
-      // Metadaten setzen und bearbeiten
-      if (enhancedMetadata && Object.keys(enhancedMetadata).length > 0) {
-        console.log("[DEBUG] Processing metadata:", enhancedMetadata);
-        
-        // Valid document types in our application
-        const validTypes = ['article', 'book', 'edited_book', 'conference', 'thesis', 
-                          'report', 'newspaper', 'website', 'interview', 'press', 'other'];
-        
-        // Mapping function similar to the one in metadata API
-        const typeMapping = {
-          'journal-article': 'article',
-          'book': 'book',
-          'book-chapter': 'book',
-          'monograph': 'book',
-          'edited-book': 'edited_book',
-          'proceedings-article': 'conference',
-          'proceedings': 'conference',
-          'conference-paper': 'conference',
-          'dissertation': 'thesis',
-          'report': 'report',
-          'report-component': 'report',
-          'journal': 'article',
-          'newspaper-article': 'newspaper',
-          'website': 'website',
-          'peer-review': 'article',
-          'standard': 'report',
-          'dataset': 'other',
-          'posted-content': 'other',
-          'reference-entry': 'other'
-        };
-        
-        // Sanitize the type
-        if (enhancedMetadata.type) {
-          if (!validTypes.includes(enhancedMetadata.type)) {
-            // Try to map the type
-            const mappedType = typeMapping[enhancedMetadata.type] || 
-                            (enhancedMetadata.type.includes('book') ? 'book' : 
-                            (enhancedMetadata.type.includes('journal') ? 'article' : 'other'));
-            
-            console.log(`[DEBUG] Sanitizing type from ${enhancedMetadata.type} to ${mappedType}`);
-            enhancedMetadata.type = mappedType;
+      // Ensure authors is properly formatted
+      if (enhancedMetadata.authors) {
+        console.log("[DEBUG] Original authors format:", enhancedMetadata.authors);
+        if (typeof enhancedMetadata.authors === 'string') {
+          try {
+            // Try to parse JSON string
+            enhancedMetadata.authors = JSON.parse(enhancedMetadata.authors);
+          } catch (e) {
+            // If not valid JSON, treat as comma-separated
+            enhancedMetadata.authors = enhancedMetadata.authors.split(',').map(name => ({ name: name.trim() }));
           }
-        } else {
-          // Set a default type if none exists
-          const detectedType = detectDocumentType(enhancedMetadata) || 'other';
-          console.log(`[DEBUG] No type specified, detected type: ${detectedType}`);
-          enhancedMetadata.type = detectedType;
+        } else if (!Array.isArray(enhancedMetadata.authors)) {
+          // Convert to array if not already
+          enhancedMetadata.authors = [{ name: String(enhancedMetadata.authors) }];
         }
         
-        // Ensure authors is properly formatted
-        if (enhancedMetadata.authors) {
-          console.log("[DEBUG] Original authors format:", enhancedMetadata.authors);
-          if (typeof enhancedMetadata.authors === 'string') {
-            try {
-              // Try to parse JSON string
-              enhancedMetadata.authors = JSON.parse(enhancedMetadata.authors);
-            } catch (e) {
-              // If not valid JSON, treat as comma-separated
-              enhancedMetadata.authors = enhancedMetadata.authors.split(',').map(name => ({ name: name.trim() }));
-            }
-          } else if (!Array.isArray(enhancedMetadata.authors)) {
-            // Convert to array if not already
-            enhancedMetadata.authors = [{ name: String(enhancedMetadata.authors) }];
-          }
-          
-          // Ensure each author has name property
-          enhancedMetadata.authors = enhancedMetadata.authors.map(author => {
-            if (typeof author === 'string') {
-              return { name: author };
-            } else if (typeof author === 'object' && !author.name && (author.given || author.family)) {
+        // Ensure each author has name property
+        enhancedMetadata.authors = enhancedMetadata.authors.map(author => {
+          if (typeof author === 'string') {
+            return { name: author };
+          } else if (typeof author === 'object') {
+            if (!author.name && (author.given || author.family)) {
               return { 
                 name: `${author.family || ''}, ${author.given || ''}`.trim(),
                 orcid: author.ORCID || author.orcid || ''
               };
+            } else {
+              return {
+                name: author.name || '',
+                orcid: author.ORCID || author.orcid || ''
+              };
             }
-            return author;
-          });
-          console.log("[DEBUG] Formatted authors:", enhancedMetadata.authors);
-        }
-        
-        // Add DOI and ISBN if available in identifiers but not in metadata
-        if (extractedIds.doi && !enhancedMetadata.doi) {
-          enhancedMetadata.doi = extractedIds.doi;
-        }
-        if (extractedIds.isbn && !enhancedMetadata.isbn) {
-          enhancedMetadata.isbn = extractedIds.isbn;
-        }
-        
-        // Format date fields to ISO format if needed
-        if (enhancedMetadata.publicationDate) {
-          enhancedMetadata.publicationDate = formatToISODate(enhancedMetadata.publicationDate);
-        }
-        
-        console.log("[DEBUG] Final enhanced metadata to set:", enhancedMetadata);
-        setMetadata(enhancedMetadata);
-      } else {
-        // Leere Metadaten erstellen, wenn keine gefunden wurden
-        console.log("[DEBUG] No metadata found, creating empty metadata");
-        createEmptyMetadata({
-          doi: extractedIds.doi,
-          isbn: extractedIds.isbn
+          }
+          return author;
         });
+        console.log("[DEBUG] Formatted authors:", enhancedMetadata.authors);
       }
       
-      setProcessingStage('Identifikatoren extrahiert');
-      setProcessingProgress(100);
-      setCurrentStep(2); // Zu Metadaten-Schritt wechseln
-      
-    } catch (error) {
-      console.error('[ERROR] Fehler bei der schnellen Analyse:', error);
-      setProcessingError(`Fehler bei der Voranalyse: ${error.message}`);
-      
-      // Trotz Fehler zum Metadaten-Schritt wechseln, falls wir eine temporäre ID haben
-      if (tempDocumentId) {
-        console.log("[DEBUG] Despite error, continuing to metadata step with empty metadata");
-        createEmptyMetadata();
-        setCurrentStep(2);
-      } else {
-        console.log("[DEBUG] Returning to upload step due to error and no tempDocumentId");
-        setCurrentStep(0); // Zurück zum Upload-Schritt
+      // Ensure title is a string, not an array
+      if (enhancedMetadata.title && Array.isArray(enhancedMetadata.title)) {
+        console.log("[DEBUG] Converting title from array to string:", enhancedMetadata.title);
+        enhancedMetadata.title = enhancedMetadata.title[0] || '';
       }
-    } finally {
-      setProcessing(false);
+      
+      // Add DOI and ISBN if available in identifiers but not in metadata
+      if (extractedIds.doi && !enhancedMetadata.doi) {
+        enhancedMetadata.doi = extractedIds.doi;
+      }
+      if (extractedIds.isbn && !enhancedMetadata.isbn) {
+        enhancedMetadata.isbn = extractedIds.isbn;
+      }
+      
+      // Format date fields to ISO format if needed
+      if (enhancedMetadata.publicationDate) {
+        enhancedMetadata.publicationDate = formatToISODate(enhancedMetadata.publicationDate);
+      }
+      
+      console.log("[DEBUG] Final enhanced metadata to set:", enhancedMetadata);
+      setMetadata(enhancedMetadata);
+    } else {
+      // Leere Metadaten erstellen, wenn keine gefunden wurden
+      console.log("[DEBUG] No metadata found, creating empty metadata");
+      createEmptyMetadata({
+        doi: extractedIds.doi,
+        isbn: extractedIds.isbn
+      });
     }
-  };
+    
+    setProcessingStage('Identifikatoren extrahiert');
+    setProcessingProgress(100);
+    setCurrentStep(2); // Zu Metadaten-Schritt wechseln
+    
+  } catch (error) {
+    console.error('[ERROR] Fehler bei der schnellen Analyse:', error);
+    setProcessingError(`Fehler bei der Voranalyse: ${error.message}`);
+    
+    // Trotz Fehler zum Metadaten-Schritt wechseln, falls wir eine temporäre ID haben
+    if (tempDocumentId) {
+      console.log("[DEBUG] Despite error, continuing to metadata step with empty metadata");
+      createEmptyMetadata();
+      setCurrentStep(2);
+    } else {
+      console.log("[DEBUG] Returning to upload step due to error and no tempDocumentId");
+      setCurrentStep(0); // Zurück zum Upload-Schritt
+    }
+  } finally {
+    setProcessing(false);
+  }
+};
   
   /**
    * Dateiauswahl behandeln
