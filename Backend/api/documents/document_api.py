@@ -1,4 +1,4 @@
-# Backend/api/documents/documents_api.py
+# Backend/api/documents/document_api.py
 """
 Main Blueprint for document management API endpoints
 """
@@ -12,6 +12,7 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from pathlib import Path
 import jwt
+import traceback
 
 # Import utils and services
 from utils.helpers import allowed_file, get_safe_filepath
@@ -36,6 +37,7 @@ CORS(documents_bp, resources={r"/*": {"origins": "*"}})
 @documents_bp.route('/status/<document_id>', methods=['GET'])
 def get_document_status_api(document_id):
     """Gets the processing status of a document"""
+    logger.info(f"Fetching status for document ID: {document_id}")
     return get_document_status(document_id)
 
 @documents_bp.route('/cancel-processing/<document_id>', methods=['POST'])
@@ -44,6 +46,7 @@ def cancel_processing(document_id):
     try:
         # Get user ID
         user_id = get_user_id()
+        logger.info(f"Canceling processing for document {document_id} by user {user_id}")
         
         # Update status to canceled
         with processing_status_lock:
@@ -55,6 +58,7 @@ def cancel_processing(document_id):
                 }
                 # Save status to file
                 save_status_to_file(document_id, processing_status[document_id])
+                logger.info(f"Processing for document {document_id} canceled successfully")
         
         return jsonify({"success": True, "message": "Processing canceled"})
     except Exception as e:
@@ -63,37 +67,50 @@ def cancel_processing(document_id):
 
 @documents_bp.route('/quick-analyze', methods=['POST'])
 def quick_analyze():
-    """Schnelle Analyse für DOI/ISBN Extraktion"""
+    """Schnelle Analyse für DOI/ISBN Extraktion mit verbesserten Logging und Fehlerbehandlung"""
+    logger.info("Starting quick-analyze endpoint")
     try:
         if 'file' not in request.files:
+            logger.warning("No file provided in request")
             return jsonify({"error": "No file provided"}), 400
             
         file = request.files['file']
         if file.filename == '':
+            logger.warning("Empty filename")
             return jsonify({"error": "No file selected"}), 400
             
         if not allowed_file(file.filename):
+            logger.warning(f"Invalid file type: {file.filename}")
             return jsonify({"error": "File type not allowed. Only PDF files are accepted."}), 400
         
-        # Einstellungen parsen
+        # Parse settings from request
+        logger.debug("Parsing settings from request")
         settings = {}
         if 'data' in request.form:
             try:
                 settings = json.loads(request.form.get('data', '{}'))
-            except json.JSONDecodeError:
+                logger.debug(f"Parsed settings: {settings}")
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON data in request: {e}")
                 return jsonify({"error": "Invalid JSON data"}), 400
         
-        # Temporär speichern
-        filename = secure_filename(file.filename)
+        # Get user ID
         user_id = get_user_id()
+        logger.info(f"Processing quick-analyze for user {user_id}")
+        
+        # Temporarily save file
+        filename = secure_filename(file.filename)
         temp_id = str(uuid.uuid4())
         user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
         os.makedirs(user_upload_dir, exist_ok=True)
         filepath = os.path.join(user_upload_dir, f"temp_{temp_id}_{filename}")
         file.save(filepath)
+        logger.info(f"File saved to temporary location: {filepath}")
         
-        # Nur die ersten Seiten für DOI/ISBN durchsuchen
+        # Configure extraction settings
         max_pages = int(settings.get('maxPages', 10))
+        perform_ocr = bool(settings.get('performOCR', False))
+        logger.info(f"Extraction settings: max_pages={max_pages}, perform_ocr={perform_ocr}")
         
         # Use PDFProcessor for extraction
         from services.pdf_processor import PDFProcessor
@@ -101,31 +118,47 @@ def quick_analyze():
         
         # Extrahiere nur DOI/ISBN ohne vollständige Verarbeitung
         try:
+            logger.info(f"Starting identifier extraction from {filepath}")
             result = pdf_processor.extract_identifiers_only(filepath, max_pages)
+            logger.info(f"Extraction result: {result}")
             
             # Metadaten abrufen, falls DOI gefunden wurde
             metadata = {}
             if result.get('doi'):
+                doi = result['doi']
+                logger.info(f"DOI found: {doi}, attempting to fetch metadata")
                 try:
                     from api.metadata import fetch_metadata_from_crossref
-                    crossref_metadata = fetch_metadata_from_crossref(result['doi'])
+                    logger.debug("Imported fetch_metadata_from_crossref successfully")
+                    
+                    crossref_metadata = fetch_metadata_from_crossref(doi)
+                    logger.debug(f"CrossRef metadata result: {crossref_metadata}")
+                    
                     if crossref_metadata:
+                        logger.info(f"Successfully fetched metadata for DOI {doi}")
                         from .document_validation import format_metadata_for_storage
                         metadata = format_metadata_for_storage(crossref_metadata)
-                except ImportError:
-                    logger.warning("Metadata API nicht verfügbar")
+                        logger.debug(f"Formatted metadata: {metadata}")
+                except ImportError as e:
+                    logger.warning(f"Metadata API not available: {e}")
                 except Exception as e:
-                    logger.warning(f"Error fetching DOI metadata: {e}")
+                    logger.warning(f"Error fetching DOI metadata: {e}", exc_info=True)
             
             # Falls ISBN gefunden, versuche OpenLibrary
             elif result.get('isbn'):
+                isbn = result['isbn']
+                logger.info(f"ISBN found: {isbn}, attempting to fetch metadata")
                 try:
                     import requests
-                    isbn = result['isbn'].replace('-', '').replace(' ', '')
+                    isbn = isbn.replace('-', '').replace(' ', '')
                     url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
+                    logger.debug(f"Making OpenLibrary request to: {url}")
+                    
                     response = requests.get(url, timeout=5)
                     if response.status_code == 200:
                         data = response.json()
+                        logger.debug(f"OpenLibrary response: {data}")
+                        
                         key = f"ISBN:{isbn}"
                         if key in data:
                             book_data = data[key]
@@ -144,9 +177,11 @@ def quick_analyze():
                                 'isbn': isbn,
                                 'type': 'book'
                             }
+                            logger.info(f"Successfully fetched book metadata from OpenLibrary")
                 except Exception as e:
-                    logger.warning(f"Error fetching ISBN metadata: {e}")
+                    logger.warning(f"Error fetching ISBN metadata: {e}", exc_info=True)
             
+            logger.info(f"Quick-analyze completed successfully for temp_id: {temp_id}")
             return jsonify({
                 "temp_id": temp_id,
                 "filename": filename,
@@ -155,7 +190,7 @@ def quick_analyze():
             })
             
         except Exception as e:
-            logger.error(f"Error extracting identifiers: {e}")
+            logger.error(f"Error extracting identifiers: {e}", exc_info=True)
             
             # Return partial result even if error occurred
             return jsonify({
@@ -166,7 +201,7 @@ def quick_analyze():
             })
             
     except Exception as e:
-        logger.error(f"Error in quick analysis: {e}")
+        logger.error(f"Error in quick analysis: {e}", exc_info=True)
         return jsonify({"error": f"Failed to analyze: {str(e)}"}), 500
 
 @documents_bp.route('', methods=['GET'])
@@ -175,29 +210,34 @@ def list_documents():
     try:
         # Get user ID
         user_id = get_user_id()
+        logger.info(f"Listing documents for user: {user_id}")
         
         documents = []
         
         # User-specific directory
         user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
         if not os.path.exists(user_upload_dir):
+            logger.info(f"User directory does not exist: {user_upload_dir}, returning empty list")
             return jsonify([])
         
         # Search JSON metadata files in user directory
         upload_folder = Path(user_upload_dir)
         metadata_files = list(upload_folder.glob("*.json"))
+        logger.debug(f"Found {len(metadata_files)} metadata files")
         
         for file in metadata_files:
             try:
                 with open(file, 'r') as f:
                     metadata = json.load(f)
                     documents.append(metadata)
+                    logger.debug(f"Added document: {metadata.get('id', 'unknown')}, title: {metadata.get('title', 'untitled')}")
             except json.JSONDecodeError:
                 logger.warning(f"Invalid JSON in file {file}")
             except Exception as e:
                 logger.error(f"Error reading metadata file {file}: {e}")
         
         # Sort by upload date, newest first
+        logger.info(f"Returning {len(documents)} documents")
         return jsonify(sorted(
             documents, 
             key=lambda x: x.get('uploadDate', ''), 
@@ -205,7 +245,7 @@ def list_documents():
         ))
         
     except Exception as e:
-        logger.error(f"Error listing documents: {e}")
+        logger.error(f"Error listing documents: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @documents_bp.route('/<document_id>', methods=['GET'])
@@ -214,82 +254,98 @@ def get_document(document_id):
     try:
         # Get user ID
         user_id = get_user_id()
+        logger.info(f"Retrieving document {document_id} for user {user_id}")
         
         # Find metadata file
         user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
         metadata_files = list(Path(user_upload_dir).glob(f"{document_id}_*.json"))
         
         if not metadata_files:
+            logger.warning(f"Document {document_id} not found")
             return jsonify({"error": "Document not found"}), 404
             
         with open(metadata_files[0], 'r') as f:
             metadata = json.load(f)
+            logger.debug(f"Retrieved metadata for document {document_id}")
             
         # Check processing status
         with processing_status_lock:
             if document_id in processing_status:
                 metadata['processing_status'] = processing_status[document_id]
+                logger.debug(f"Added processing status to response: {processing_status[document_id]}")
             
         return jsonify(metadata)
         
     except Exception as e:
-        logger.error(f"Error retrieving document {document_id}: {e}")
+        logger.error(f"Error retrieving document {document_id}: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @documents_bp.route('', methods=['POST'])
 def save_document():
-    """Upload and process a new document with improved validation"""
+    """Upload and process a new document with improved validation and logging"""
     try:
         # Check if file or metadata is provided
         if 'file' not in request.files and not request.form.get('data'):
+            logger.warning("No file or data provided in request")
             return jsonify({"error": "No file or data provided"}), 400
         
         # Extract metadata from form
         metadata = {}
         if 'data' in request.form:
             try:
+                logger.debug("Parsing metadata from form data")
                 metadata = json.loads(request.form.get('data', '{}'))
                 
                 # Check if title is directly in request.form (fix)
                 if 'title' in request.form and request.form['title']:
                     metadata['title'] = request.form['title']
+                    logger.debug(f"Using title from form field: {metadata['title']}")
                 
                 # Check if type is directly in request.form (fix)
                 if 'type' in request.form and request.form['type']:
                     metadata['type'] = request.form['type']
+                    logger.debug(f"Using type from form field: {metadata['type']}")
                 
                 # Check if authors is directly in request.form (fix)
                 if 'authors' in request.form and request.form['authors']:
                     try:
                         metadata['authors'] = json.loads(request.form['authors'])
+                        logger.debug(f"Using authors from form field: {metadata['authors']}")
                     except:
-                        pass  # Ignore errors when parsing authors
+                        logger.warning("Failed to parse authors JSON from form field")
                 
             except json.JSONDecodeError:
+                logger.error("Invalid JSON data in request")
                 return jsonify({"error": "Invalid JSON data"}), 400
         
         # Validate metadata
+        logger.debug("Validating metadata")
         is_valid, error_message = validate_metadata(metadata)
         if not is_valid:
+            logger.warning(f"Metadata validation failed: {error_message}")
             return jsonify({"error": error_message}), 400
         
         # Generate document ID if not provided
         document_id = metadata.get('id', str(uuid.uuid4()))
+        logger.info(f"Processing document {document_id}")
         
         # Get user ID
         user_id = get_user_id()
+        logger.info(f"User ID: {user_id}")
         
         metadata['user_id'] = user_id
         
         # Create user-specific upload directory
         user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
         os.makedirs(user_upload_dir, exist_ok=True)
+        logger.debug(f"User upload directory: {user_upload_dir}")
         
         # Check for temp_document_id to reuse already uploaded file
         temp_document_id = metadata.get('temp_document_id')
         filepath = None
         
         if temp_document_id:
+            logger.info(f"Temp document ID provided: {temp_document_id}, looking for existing file")
             temp_files = list(Path(user_upload_dir).glob(f"temp_{temp_document_id}_*"))
             if temp_files:
                 temp_filepath = str(temp_files[0])
@@ -304,9 +360,11 @@ def save_document():
         if 'file' in request.files and (filepath is None):
             file = request.files['file']
             if file.filename == '':
+                logger.warning("Empty filename in uploaded file")
                 return jsonify({"error": "No file selected"}), 400
             
             if not allowed_file(file.filename):
+                logger.warning(f"Invalid file type: {file.filename}")
                 return jsonify({"error": "File type not allowed. Only PDF files are accepted."}), 400
             
             filename = secure_filename(file.filename)
@@ -314,11 +372,13 @@ def save_document():
             
             try:
                 file.save(filepath)
+                logger.info(f"Uploaded file saved to: {filepath}")
             except Exception as e:
                 logger.error(f"Error saving file: {e}")
                 return jsonify({"error": f"File upload failed: {str(e)}"}), 500
         
         if filepath is None:
+            logger.error("No file path available after processing")
             return jsonify({"error": "No file provided"}), 400
         
         # Optionally save document metadata to database
@@ -326,6 +386,7 @@ def save_document():
             from services.document_db_service import DocumentDBService
             doc_db_service = DocumentDBService()
             
+            logger.debug("Saving document metadata to database")
             save_result = doc_db_service.save_document_metadata(
                 document_id=document_id,
                 user_id=user_id,
@@ -350,6 +411,7 @@ def save_document():
                 'chunkSize': int(metadata.get('chunkSize', 1000)),
                 'chunkOverlap': int(metadata.get('chunkOverlap', 200))
             }
+            logger.debug(f"Processing settings: {processing_settings}")
             
             # Add upload-specific metadata
             metadata['document_id'] = document_id
@@ -363,11 +425,13 @@ def save_document():
             metadata_path = f"{filepath}.json"
             with open(metadata_path, 'w') as f:
                 json.dump(metadata, f, indent=2)
+                logger.debug(f"Initial metadata saved to: {metadata_path}")
             
             # Get current app object
             app = current_app._get_current_object()
             
             # Start background processing
+            logger.info(f"Starting background processing for document {document_id}")
             get_executor().submit(
                 process_pdf_background,
                 filepath,
@@ -388,7 +452,9 @@ def save_document():
                 # Save status with app context
                 with app.app_context():
                     save_status_to_file(document_id, initial_status)
+                    logger.debug(f"Initial processing status saved for document {document_id}")
             
+            logger.info(f"Document {document_id} successfully uploaded and processing started")
             return jsonify({
                 **metadata,
                 "document_id": document_id,
@@ -399,12 +465,13 @@ def save_document():
             # Clean up on error
             if os.path.exists(filepath):
                 os.unlink(filepath)
-            logger.error(f"Error processing document: {e}")
+                logger.warning(f"Cleaned up file {filepath} due to error")
+            logger.error(f"Error processing document: {e}", exc_info=True)
             return jsonify({"error": f"Error processing document: {str(e)}"}), 500
         
     except Exception as e:
-        logger.error(f"Fehler in save_document: {e}")
-        return jsonify({"error": f"Fehler beim Speichern des Dokuments: {str(e)}"}), 500
+        logger.error(f"Error in save_document: {e}", exc_info=True)
+        return jsonify({"error": f"Error saving document: {str(e)}"}), 500
 
 @documents_bp.route('/<document_id>', methods=['DELETE'])
 def delete_document_api(document_id):
@@ -422,17 +489,21 @@ def delete_document_api(document_id):
             except Exception as e:
                 logger.warning(f"JWT decoding failed: {e}")
         
+        logger.info(f"Deleting document {document_id} for user {user_id}")
+        
         # Find all files for this document in user's directory
         user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
         files = list(Path(user_upload_dir).glob(f"{document_id}_*"))
         
         if not files:
+            logger.warning(f"Document {document_id} not found for deletion")
             return jsonify({"error": "Document not found"}), 404
         
         # Delete PDF and metadata files
         for file in files:
             try:
                 file.unlink()
+                logger.debug(f"Deleted file: {file}")
             except Exception as e:
                 logger.error(f"Error deleting file {file}: {e}")
         
@@ -441,21 +512,28 @@ def delete_document_api(document_id):
         if os.path.exists(status_file):
             try:
                 os.unlink(status_file)
+                logger.debug(f"Deleted status file: {status_file}")
             except Exception as e:
                 logger.error(f"Error deleting status file {status_file}: {e}")
         
         # Delete from vector database
-        delete_from_vector_db(document_id, user_id)
+        try:
+            delete_from_vector_db(document_id, user_id)
+            logger.info(f"Deleted document {document_id} from vector database")
+        except Exception as e:
+            logger.error(f"Error deleting from vector database: {e}")
         
         # Clear any processing status
         with processing_status_lock:
             if document_id in processing_status:
                 del processing_status[document_id]
+                logger.debug(f"Removed processing status for document {document_id}")
         
+        logger.info(f"Document {document_id} successfully deleted")
         return jsonify({"success": True, "message": f"Document {document_id} deleted successfully"})
         
     except Exception as e:
-        logger.error(f"Error deleting document {document_id}: {e}")
+        logger.error(f"Error deleting document {document_id}: {e}", exc_info=True)
         return jsonify({"error": f"Failed to delete document: {str(e)}"}), 500
 
 @documents_bp.route('/<document_id>', methods=['PUT'])
@@ -474,30 +552,38 @@ def update_document(document_id):
             except Exception as e:
                 logger.warning(f"JWT decoding failed: {e}")
         
+        logger.info(f"Updating document {document_id} for user {user_id}")
+        
         if not request.is_json:
+            logger.warning("Request is not JSON")
             return jsonify({"error": "Request must be JSON"}), 400
         
         metadata = request.get_json()
+        logger.debug(f"Update metadata received: {metadata}")
         
         # Find document in user's directory
         user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
         files = list(Path(user_upload_dir).glob(f"{document_id}_*"))
         
         if not files:
+            logger.warning(f"Document {document_id} not found for update")
             return jsonify({"error": "Document not found"}), 404
             
         # Find PDF file
         pdf_files = [f for f in files if f.suffix.lower() == '.pdf']
         if not pdf_files:
+            logger.warning(f"PDF file not found for document {document_id}")
             return jsonify({"error": "PDF file not found"}), 404
         
         filepath = str(pdf_files[0])
+        logger.debug(f"Found PDF file at: {filepath}")
         
         # Load existing metadata
         metadata_path = f"{filepath}.json"
         if os.path.exists(metadata_path):
             with open(metadata_path, 'r') as f:
                 existing_metadata = json.load(f)
+            logger.debug(f"Loaded existing metadata for document {document_id}")
             
             # Process specific fields that need updating in the vector database
             update_chunks = False
@@ -505,12 +591,14 @@ def update_document(document_id):
             
             for field in critical_fields:
                 if field in metadata and metadata[field] != existing_metadata.get(field):
+                    logger.info(f"Critical field '{field}' changed, will update vector database")
                     update_chunks = True
                     break
             
             # Merge with existing metadata
             merged_metadata = {**existing_metadata, **metadata}
             metadata = merged_metadata
+            logger.debug(f"Merged metadata: {metadata}")
             
             # If critical fields were updated, update the vector database
             if update_chunks and metadata.get('processed') and metadata.get('num_chunks', 0) > 0:
@@ -533,8 +621,10 @@ def update_document(document_id):
                     with processing_status_lock:
                         processing_status[document_id] = update_status
                         save_status_to_file(document_id, update_status)
+                        logger.debug(f"Updated processing status for document {document_id}")
                     
                     # Start background processing
+                    logger.info(f"Starting background processing for document update {document_id}")
                     get_executor().submit(
                         process_pdf_background,
                         filepath,
@@ -545,7 +635,7 @@ def update_document(document_id):
                     
                     metadata['processingComplete'] = False
                 except Exception as e:
-                    logger.error(f"Error updating vector database: {e}")
+                    logger.error(f"Error updating vector database: {e}", exc_info=True)
         
         # Add update timestamp
         metadata['document_id'] = document_id
@@ -554,11 +644,12 @@ def update_document(document_id):
         # Save metadata
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
+            logger.info(f"Updated metadata saved for document {document_id}")
         
         return jsonify(metadata)
         
     except Exception as e:
-        logger.error(f"Error updating document {document_id}: {e}")
+        logger.error(f"Error updating document {document_id}: {e}", exc_info=True)
         return jsonify({"error": f"Failed to update document: {str(e)}"}), 500
 
 @documents_bp.route('/analyze', methods=['POST'])
@@ -571,28 +662,36 @@ def analyze_document():
     try:
         # Get user ID from auth middleware
         user_id = g.user_id if hasattr(g, 'user_id') else 'default_user'
+        logger.info(f"Starting document analysis for user {user_id}")
         
         # Check if file was uploaded
         if 'file' not in request.files:
+            logger.warning("No file provided in request")
             return jsonify({"error": "No file provided"}), 400
             
         file = request.files['file']
         if file.filename == '':
+            logger.warning("Empty filename")
             return jsonify({"error": "No file selected"}), 400
         
         if not allowed_file(file.filename):
+            logger.warning(f"Invalid file type: {file.filename}")
             return jsonify({"error": "File type not allowed. Only PDF files are accepted."}), 400
         
         # Parse request settings
+        logger.debug("Parsing settings from request")
         settings = {}
         if 'data' in request.form:
             try:
                 settings = json.loads(request.form.get('data', '{}'))
+                logger.debug(f"Parsed settings: {settings}")
             except json.JSONDecodeError:
+                logger.error("Invalid JSON data in request")
                 return jsonify({"error": "Invalid JSON data"}), 400
         
         # Create document ID
         document_id = str(uuid.uuid4())
+        logger.info(f"Created document ID for analysis: {document_id}")
         
         # Create user directory if it doesn't exist
         user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
@@ -602,6 +701,7 @@ def analyze_document():
         filename = secure_filename(file.filename)
         temp_filepath = os.path.join(user_upload_dir, f"temp_{document_id}_{filename}")
         file.save(temp_filepath)
+        logger.info(f"Saved temporary file for analysis: {temp_filepath}")
         
         # Create job entry for async processing
         with processing_status_lock:

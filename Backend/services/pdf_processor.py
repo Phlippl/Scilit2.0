@@ -1,3 +1,4 @@
+# Backend/services/pdf_processor.py
 import os
 import re
 import logging
@@ -75,26 +76,32 @@ class PDFProcessor:
     def validate_pdf(self, filepath):
         """Validate PDF format with improved error handling"""
         try:
+            logger.debug(f"Validating PDF: {filepath}")
             # Check if file exists
             if not os.path.exists(filepath):
+                logger.error(f"PDF file not found: {filepath}")
                 return False, "PDF file not found"
                 
             # Check header bytes
             with open(filepath, 'rb') as f:
                 header = f.read(5)
                 if header != b'%PDF-':
+                    logger.error(f"Invalid PDF header: {header}")
                     return False, "Invalid PDF file format (incorrect header)"
             
             # Try opening with PyMuPDF
             try:
                 doc = fitz.open(filepath)
                 page_count = len(doc)
+                logger.info(f"Successfully opened PDF with {page_count} pages")
                 doc.close()
                 return True, page_count
             except Exception as e:
+                logger.error(f"PyMuPDF error: {str(e)}")
                 return False, f"Could not open PDF with PyMuPDF: {str(e)}"
                 
         except Exception as e:
+            logger.error(f"PDF validation error: {str(e)}")
             return False, str(e)
     
     def extract_text_from_pdf(self, pdf_file, max_pages=0, perform_ocr=False, progress_callback=None):
@@ -119,17 +126,20 @@ class PDFProcessor:
                 return self._text_cache[file_hash]
         
         try:
+            logger.info(f"Extracting text from PDF: {pdf_file if isinstance(pdf_file, str) else 'bytes data'}")
             # Create temp file for bytes input
             if isinstance(pdf_file, bytes):
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
                 temp_file.write(pdf_file)
                 temp_file.close()
                 pdf_path = temp_file.name
+                logger.debug(f"Created temp file for bytes data: {pdf_path}")
             else:
                 pdf_path = pdf_file
             
             # Open PDF
             doc = fitz.open(pdf_path)
+            logger.debug(f"Opened PDF with {len(doc)} pages")
             
             # Prepare result object
             result = {
@@ -146,6 +156,7 @@ class PDFProcessor:
             
             for batch_start in range(0, pages_to_process, BATCH_SIZE):
                 batch_end = min(batch_start + BATCH_SIZE, pages_to_process)
+                logger.debug(f"Processing batch: pages {batch_start+1}-{batch_end} of {pages_to_process}")
                 
                 # Process each page in the batch
                 for i in range(batch_start, batch_end):
@@ -167,12 +178,14 @@ class PDFProcessor:
                     
                     # Extract text
                     page_text = page.get_text()
+                    logger.debug(f"Extracted {len(page_text)} characters from page {i+1}")
                     
                     # Split large text blocks to prevent memory issues
                     if len(page_text) > self.MAX_PARAGRAPH_SIZE:
                         # Use natural breaks to split text
                         split_texts = re.split(r'\n\s*\n', page_text)
                         page_text = '\n\n'.join(split_texts)
+                        logger.debug(f"Split large text block into {len(split_texts)} paragraphs")
                         
                     page_info['text'] = page_text
                     page_info['length'] = len(page_text)
@@ -185,6 +198,7 @@ class PDFProcessor:
                     
                     # Add to OCR candidates if low text
                     if perform_ocr and len(page_text.strip()) < 100:
+                        logger.debug(f"Adding page {i+1} to OCR candidates (low text content)")
                         ocr_candidates.append(i)
                     
                     result['pages'].append(page_info)
@@ -194,12 +208,14 @@ class PDFProcessor:
 
             # Perform OCR for pages with little text
             if perform_ocr and ocr_candidates:
+                logger.info(f"Performing OCR on {len(ocr_candidates)} pages with little text")
                 if progress_callback:
                     progress_callback(f"Performing OCR on {len(ocr_candidates)} pages", 50)
                 
                 # Process OCR in smaller batches to limit memory usage
                 for i in range(0, len(ocr_candidates), self.MAX_OCR_PAGES):
                     batch = ocr_candidates[i:i+self.MAX_OCR_PAGES]
+                    logger.debug(f"Processing OCR batch: {len(batch)} pages")
                     
                     # Process OCR for this batch
                     futures = []
@@ -211,6 +227,7 @@ class PDFProcessor:
                     for j, future in enumerate(futures):
                         try:
                             page_num, ocr_text = future.result()
+                            logger.debug(f"Got OCR result for page {page_num}: {len(ocr_text)} chars")
                             # Convert to 1-based page number for index
                             idx = page_num - 1
                             if idx < len(result['pages']):
@@ -220,10 +237,12 @@ class PDFProcessor:
                                     result['pages'][idx]['text'] = ocr_text
                                     # Update total text by replacing the empty text
                                     result['text'] = result['text'].replace(orig_text, ocr_text)
+                                    logger.debug(f"Replaced empty text with OCR text for page {page_num}")
                                 else:
                                     # Append OCR text if original text exists
                                     result['pages'][idx]['text'] += ' ' + ocr_text
                                     result['text'] += ' ' + ocr_text
+                                    logger.debug(f"Appended OCR text to existing text for page {page_num}")
                             
                             # Report progress
                             if progress_callback:
@@ -239,6 +258,7 @@ class PDFProcessor:
             doc.close()
             if isinstance(pdf_file, bytes) and os.path.exists(pdf_path):
                 os.unlink(pdf_path)
+                logger.debug(f"Removed temporary file: {pdf_path}")
             
             # Cache the result if we have a file hash
             if file_hash:
@@ -247,17 +267,20 @@ class PDFProcessor:
                     # Remove oldest entry
                     oldest_key = next(iter(self._text_cache))
                     self._text_cache.pop(oldest_key)
+                    logger.debug(f"Removed oldest cache entry: {oldest_key}")
                     
                 self._text_cache[file_hash] = result
+                logger.debug(f"Cached extraction result with key: {file_hash}")
             
             # Final progress report
             if progress_callback:
                 progress_callback("Text extraction complete", 100)
             
+            logger.info(f"Text extraction complete. Extracted {len(result['text'])} chars from {len(result['pages'])} pages")
             return result
         
         except Exception as e:
-            logger.error(f"Error extracting text from PDF: {e}")
+            logger.error(f"Error extracting text from PDF: {e}", exc_info=True)
             # Clean up on error
             if isinstance(pdf_file, bytes) and 'pdf_path' in locals() and os.path.exists(pdf_path):
                 os.unlink(pdf_path)
@@ -278,10 +301,12 @@ class PDFProcessor:
         """
         try:
             if page_idx < 0 or page_idx >= len(doc):
+                logger.warning(f"Invalid page index for OCR: {page_idx}")
                 return page_idx + 1, ""
             
             # Render page to image
             page = doc[page_idx]
+            logger.debug(f"Rendering page {page_idx+1} for OCR at {dpi} DPI")
             pix = page.get_pixmap(matrix=fitz.Matrix(dpi/72, dpi/72))
             
             # Convert to image for OCR
@@ -289,7 +314,9 @@ class PDFProcessor:
             img = Image.open(io.BytesIO(img_data))
             
             # Perform OCR
+            logger.debug(f"Performing OCR on page {page_idx+1}")
             ocr_text = pytesseract.image_to_string(img)
+            logger.debug(f"OCR complete for page {page_idx+1}, extracted {len(ocr_text)} chars")
             
             # Return page number (1-based) with text
             return page_idx + 1, ocr_text
@@ -310,11 +337,15 @@ class PDFProcessor:
         """
         # Check cache first
         if cache_key and cache_key in self._identifier_cache:
+            logger.debug(f"Using cached identifiers for key: {cache_key}")
             return self._identifier_cache[cache_key]
-            
+        
+        logger.info("Extracting identifiers from text")
         # Extract DOI and ISBN
         doi = self.extract_doi(text)
         isbn = self.extract_isbn(text)
+        
+        logger.info(f"Extracted identifiers: DOI={doi}, ISBN={isbn}")
         
         result = {'doi': doi, 'isbn': isbn}
         
@@ -325,15 +356,17 @@ class PDFProcessor:
                 # Remove oldest entry
                 oldest_key = next(iter(self._identifier_cache))
                 self._identifier_cache.pop(oldest_key)
+                logger.debug(f"Removed oldest identifier cache entry: {oldest_key}")
                 
             self._identifier_cache[cache_key] = result
+            logger.debug(f"Cached identifier result with key: {cache_key}")
             
         return result
     
     @staticmethod
     def extract_doi(text):
         """
-        Extract DOI from text using regex
+        Extract DOI from text using regex with enhanced patterns and logging
         
         Args:
             text: Text to search
@@ -342,26 +375,47 @@ class PDFProcessor:
             str: Found DOI or None
         """
         if not text:
+            logger.debug("No text provided for DOI extraction")
             return None
         
-        # DOI patterns
+        # DOI patterns - Enhanced for better matching
         doi_patterns = [
+            # Standard DOI format with word boundary
             r'\b(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)\b',
+            
+            # DOI with label
             r'\bDOI:\s*(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)\b',
-            r'\bdoi\.org\/(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)\b'
+            
+            # DOI with doi.org URL
+            r'\bdoi\.org\/(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)\b',
+            
+            # DOI in URL with https
+            r'https?:\/\/doi\.org\/(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)',
+            
+            # DOI in parentheses - common in academic papers
+            r'\(doi:\s*(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)\)',
+            
+            # DOI with Digital Object Identifier label
+            r'Digital\s+Object\s+Identifier.{0,20}(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)',
+            
+            # DOI in German text
+            r'(?:DOI|doi)[-:]?\s*(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)'
         ]
         
-        for pattern in doi_patterns:
+        for idx, pattern in enumerate(doi_patterns):
             matches = re.search(pattern, text, re.IGNORECASE)
             if matches and matches.group(1):
-                return matches.group(1)
+                doi = matches.group(1).strip()
+                logger.info(f"DOI found with pattern {idx+1}: {doi}")
+                return doi
         
+        logger.debug("No DOI found in text")
         return None
     
     @staticmethod
     def extract_isbn(text):
         """
-        Extract ISBN from text using regex
+        Extract ISBN from text using enhanced regex patterns and logging
         
         Args:
             text: Text to search
@@ -370,27 +424,44 @@ class PDFProcessor:
             str: Found ISBN or None
         """
         if not text:
+            logger.debug("No text provided for ISBN extraction")
             return None
         
-        # ISBN patterns
+        # ISBN patterns - Enhanced for better matching
         isbn_patterns = [
-            r'\bISBN(?:-13)?[:\s]*(97[89][- ]?(?:\d[- ]?){9}\d)\b',  # ISBN-13
-            r'\bISBN(?:-10)?[:\s]*(\d[- ]?(?:\d[- ]?){8}[\dX])\b',   # ISBN-10
-            r'\b(97[89][- ]?(?:\d[- ]?){9}\d)\b',  # Bare ISBN-13
-            r'\b(\d[- ]?(?:\d[- ]?){8}[\dX])\b'    # Bare ISBN-10
+            # ISBN-13 with label
+            r'\bISBN(?:-13)?[:\s]*(97[89][- ]?(?:\d[- ]?){9}\d)\b',
+            
+            # ISBN-10 with label
+            r'\bISBN(?:-10)?[:\s]*(\d[- ]?(?:\d[- ]?){8}[\dX])\b',
+            
+            # Bare ISBN-13 with word boundary
+            r'\b(97[89][- ]?(?:\d[- ]?){9}\d)\b',
+            
+            # Bare ISBN-10 with word boundary  
+            r'\b(\d[- ]?(?:\d[- ]?){8}[\dX])\b',
+            
+            # ISBN in German text
+            r'(?:ISBN|isbn)[-:]?\s*((?:97[89][- ]?)?(?:\d[- ]?){9}[\dX])',
+            
+            # ISBN with International Standard Book Number label
+            r'International\s+Standard\s+Book\s+Number.{0,20}((?:97[89][- ]?)?(?:\d[- ]?){9}[\dX])'
         ]
         
-        for pattern in isbn_patterns:
+        for idx, pattern in enumerate(isbn_patterns):
             matches = re.search(pattern, text, re.IGNORECASE)
             if matches and matches.group(1):
                 # Remove hyphens and spaces
-                return matches.group(1).replace('-', '').replace(' ', '')
+                isbn = matches.group(1).replace('-', '').replace(' ', '')
+                logger.info(f"ISBN found with pattern {idx+1}: {isbn}")
+                return isbn
         
+        logger.debug("No ISBN found in text")
         return None
     
     def extract_identifiers_only(self, filepath, max_pages=10):
         """
-        Extrahiert nur DOI und ISBN aus den ersten Seiten eines PDFs
+        Extrahiert nur DOI und ISBN aus den ersten Seiten eines PDFs mit detailliertem Logging
         
         Args:
             filepath: Pfad zur PDF-Datei
@@ -400,44 +471,71 @@ class PDFProcessor:
             dict: Dictionary mit gefundenen Identifikatoren
         """
         doc = None
+        logger.info(f"Extracting identifiers only from: {filepath}, max_pages={max_pages}")
         try:
             # PDF öffnen
             doc = fitz.open(filepath)
+            file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
+            logger.info(f"Opened PDF with {len(doc)} pages, size: {file_size_mb:.2f} MB")
             
             # Seitenzahl begrenzen
             pages_to_process = min(max_pages, len(doc))
+            logger.debug(f"Will process {pages_to_process} pages for identifier extraction")
             
             # Text aus ersten Seiten extrahieren
             text = ""
             for i in range(pages_to_process):
                 page = doc[i]
-                text += page.get_text() + "\n"
+                page_text = page.get_text()
+                logger.debug(f"Extracted {len(page_text)} chars from page {i+1}")
+                text += page_text + "\n"
             
-            # DOI und ISBN extrahieren
+            # First try extracting from first few pages
             doi = self.extract_doi(text)
             isbn = self.extract_isbn(text)
+            
+            # If no DOI/ISBN found and we didn't process all pages, try front and back matter
+            if (not doi and not isbn) and pages_to_process < len(doc):
+                logger.info("No identifiers found in first pages, checking front and back matter")
+                # Try first page and last few pages (often contain publication info)
+                back_pages_text = ""
+                back_pages_start = max(0, len(doc) - 3)  # Last 3 pages
+                for i in range(back_pages_start, len(doc)):
+                    if i >= pages_to_process:  # Skip pages we already processed
+                        page = doc[i]
+                        back_pages_text += page.get_text() + "\n"
+                        logger.debug(f"Extracted {len(page.get_text())} chars from back page {i+1}")
+                
+                # Try to find identifiers in back matter
+                if not doi:
+                    doi = self.extract_doi(back_pages_text)
+                if not isbn:
+                    isbn = self.extract_isbn(back_pages_text)
             
             # Wichtig: Dokument am Ende schließen
             total_pages = len(doc)
             doc.close()
             doc = None
             
-            return {
+            result = {
                 'doi': doi,
                 'isbn': isbn,
                 'pages_processed': pages_to_process,
                 'total_pages': total_pages
             }
+            logger.info(f"Identifier extraction complete: {result}")
+            return result
         except Exception as e:
-            logger.error(f"Error extracting identifiers: {e}")
+            logger.error(f"Error extracting identifiers: {e}", exc_info=True)
             return {'error': str(e)}
         finally:
             # Sicherstellen, dass Dokument geschlossen wird
             if doc:
                 try:
                     doc.close()
-                except:
-                    pass
+                    logger.debug("Closed PDF document in finally block")
+                except Exception as e:
+                    logger.error(f"Error closing document in finally block: {e}")
 
     def chunk_text_with_pages(self, text, pages_info, chunk_size=1000, overlap_size=200):
         """
@@ -453,12 +551,15 @@ class PDFProcessor:
             list: List of text chunks with page assignments
         """
         if not text or chunk_size <= 0:
+            logger.warning("Invalid input for chunking: empty text or invalid chunk size")
             return []
         
+        logger.info(f"Chunking text with pages, text length: {len(text)}, chunk_size: {chunk_size}, overlap: {overlap_size}")
         chunks = []
         
         # If text is smaller than chunk size, return as single chunk
         if len(text) <= chunk_size:
+            logger.debug("Text smaller than chunk size, returning as single chunk")
             # Find page
             page_number = 1
             for page in pages_info:
@@ -469,6 +570,7 @@ class PDFProcessor:
             return [{'text': text, 'page_number': page_number}]
         
         # Create position to page mapping
+        logger.debug("Creating position to page mapping")
         pos_to_page = {}
         for page in pages_info:
             for pos in range(page['startPosition'], page['endPosition'] + 1):
@@ -476,17 +578,21 @@ class PDFProcessor:
         
         # Monitor memory usage
         initial_memory = psutil.Process().memory_info().rss / (1024 * 1024)  # MB
+        logger.debug(f"Initial memory usage: {initial_memory:.2f} MB")
         
         # Choose chunking method based on text size
         try:
             # For large texts, use simpler chunking
             if len(text) > 100000:  # 100K is a threshold
+                logger.info(f"Large text detected ({len(text)} chars), using simple chunking")
                 text_chunks = self.chunk_text(text, chunk_size, overlap_size)
             else:
+                logger.info(f"Using semantic chunking for text ({len(text)} chars)")
                 text_chunks = self.chunk_text_semantic(text, chunk_size, overlap_size)
                 
             current_memory = psutil.Process().memory_info().rss / (1024 * 1024)
             memory_used = current_memory - initial_memory
+            logger.debug(f"Memory used after chunking: {memory_used:.2f} MB")
             
             # Force GC on high memory usage
             if memory_used > 200:  # 200MB threshold
@@ -494,10 +600,12 @@ class PDFProcessor:
                 gc.collect()
                 
         except Exception as e:
-            logger.error(f"Error in semantic chunking: {e}, falling back to simple chunking")
+            logger.error(f"Error in semantic chunking: {e}", exc_info=True)
+            logger.warning("Falling back to simple chunking")
             text_chunks = self.chunk_text(text, chunk_size, overlap_size)
         
         # Assign pages to chunks
+        logger.debug(f"Assigning pages to {len(text_chunks)} chunks")
         current_pos = 0
         for chunk in text_chunks:
             # Find chunk position in the original text
@@ -505,6 +613,7 @@ class PDFProcessor:
             if chunk_start == -1:
                 # Fallback if exact position not found
                 chunk_start = current_pos
+                logger.warning(f"Could not find exact chunk position, using fallback position: {current_pos}")
             
             chunk_end = min(chunk_start + len(chunk), len(text) - 1)
             current_pos = chunk_end - overlap_size if overlap_size > 0 else chunk_end
@@ -529,6 +638,7 @@ class PDFProcessor:
                 'page_number': most_common_page
             })
         
+        logger.info(f"Chunking complete, created {len(chunks)} chunks with page tracking")
         return chunks
     
     def chunk_text(self, text, chunk_size=1000, overlap_size=200):
@@ -544,12 +654,15 @@ class PDFProcessor:
             list: List of text chunks
         """
         if not text or chunk_size <= 0:
+            logger.warning("Invalid input for simple chunking")
             return []
         
+        logger.debug(f"Simple chunking text, length: {len(text)}, chunk_size: {chunk_size}, overlap: {overlap_size}")
         chunks = []
         
         # Single chunk for small text
         if len(text) <= chunk_size:
+            logger.debug("Text smaller than chunk size, returning as single chunk")
             return [text]
         
         start_index = 0
@@ -577,8 +690,10 @@ class PDFProcessor:
                 # Use nearest natural break
                 if paragraph_end != -1 and (sentence_end == -1 or 
                                           abs(paragraph_end - end_index) < abs(sentence_end - end_index)):
+                    logger.debug(f"Found paragraph break at {paragraph_end}, original end: {end_index}")
                     end_index = paragraph_end + 2  # Include '\n\n'
                 elif sentence_end != -1:
+                    logger.debug(f"Found sentence break at {sentence_end}, original end: {end_index}")
                     end_index = sentence_end + 1  # Include space after punctuation
             
             # Extract chunk
@@ -592,6 +707,7 @@ class PDFProcessor:
             if start_index <= 0 or start_index >= end_index:
                 start_index = end_index
         
+        logger.debug(f"Simple chunking complete, created {len(chunks)} chunks")
         return chunks
     
     def chunk_text_semantic(self, text, chunk_size=1000, overlap_size=200):
@@ -610,6 +726,7 @@ class PDFProcessor:
         MAX_PARAGRAPHS = 1000  # Avoid excessive memory use
         
         if not text or chunk_size <= 0:
+            logger.warning("Invalid input for semantic chunking")
             return []
         
         # Truncate very long texts
@@ -619,11 +736,12 @@ class PDFProcessor:
         
         # Single chunk for small text
         if len(text) <= chunk_size:
+            logger.debug("Text smaller than chunk size, returning as single chunk")
             return [text]
         
         # Process large texts in segments
         if len(text) > 20000:
-            logger.info("Large text detected, processing in segments")
+            logger.info(f"Large text detected ({len(text)} chars), processing in segments")
             segments = []
             segment_size = 10000
             overlap = 1000
@@ -631,6 +749,7 @@ class PDFProcessor:
             for i in range(0, len(text), segment_size - overlap):
                 end = min(i + segment_size, len(text))
                 segment_text = text[i:end]
+                logger.debug(f"Processing segment {i}-{end} ({len(segment_text)} chars)")
                 
                 # Process each segment with simpler chunking
                 segment_chunks = self.chunk_text(segment_text, chunk_size, overlap_size)
@@ -639,11 +758,13 @@ class PDFProcessor:
                 # Force GC after each segment
                 gc.collect()
                 
+            logger.debug(f"Segmented processing complete, created {len(segments)} chunks")
             return segments
         
         try:
             # Split text into paragraphs
             paragraphs = re.split(r'\n\s*\n', text)
+            logger.debug(f"Split text into {len(paragraphs)} paragraphs")
             
             # Limit paragraphs to prevent memory issues
             if len(paragraphs) > MAX_PARAGRAPHS:
@@ -673,6 +794,7 @@ class PDFProcessor:
                     remaining_text = ' '.join(paragraphs[paragraph_count:])
                     simple_chunks = self.chunk_text(remaining_text, chunk_size, overlap_size)
                     chunks.extend(simple_chunks)
+                    logger.debug(f"Completed semantic chunking with simple chunking fallback, {len(chunks)} chunks")
                     return chunks
                 
                 paragraph_count += 1
@@ -680,6 +802,7 @@ class PDFProcessor:
                 
                 # Handle paragraphs larger than chunk size
                 if para_size > chunk_size:
+                    logger.debug(f"Paragraph {paragraph_count} larger than chunk size: {para_size} chars")
                     # Save current chunk first
                     if current_size > 0:
                         chunks.append(' '.join(current_chunk))
@@ -701,10 +824,12 @@ class PDFProcessor:
                                 
                             doc = spacy_nlp(paragraph)
                             sentences = [sent.text for sent in doc.sents]
+                            logger.debug(f"Split paragraph into {len(sentences)} sentences using spaCy")
                         
                     except Exception as e:
                         logger.warning(f"Error in spaCy sentence splitting: {e}, using regex")
                         sentences = re.split(r'(?<=[.!?])\s+', paragraph)
+                        logger.debug(f"Split paragraph into {len(sentences)} sentences using regex fallback")
                     
                     # Combine sentences into chunks
                     sentence_chunk = []
@@ -724,6 +849,7 @@ class PDFProcessor:
                             
                             # Handle very large sentences
                             if sent_size > chunk_size:
+                                logger.debug(f"Very large sentence: {sent_size} chars, using simple chunking")
                                 # Use simple chunking for large sentences
                                 sent_chunks = self.chunk_text(sentence, chunk_size, overlap_size)
                                 chunks.extend(sent_chunks)
@@ -752,6 +878,7 @@ class PDFProcessor:
             
             # Add overlap if needed
             if overlap_size > 0 and len(chunks) > 1:
+                logger.debug(f"Adding overlap between chunks, size: {overlap_size}")
                 chunks_with_overlap = [chunks[0]]
                 
                 for i in range(1, len(chunks)):
@@ -770,16 +897,19 @@ class PDFProcessor:
                 chunks = chunks_with_overlap
             
             # Remove empty chunks
-            return [chunk for chunk in chunks if chunk.strip()]
+            result = [chunk for chunk in chunks if chunk.strip()]
+            logger.debug(f"Semantic chunking complete, created {len(result)} chunks")
+            return result
             
         except Exception as e:
             logger.error(f"Error in semantic chunking: {str(e)}", exc_info=True)
             # Fall back to simpler chunking
+            logger.warning("Error in semantic chunking, falling back to simple chunking")
             return self.chunk_text(text, chunk_size, overlap_size)
     
     def process_file(self, file_path, settings=None, progress_callback=None):
         """
-        Process a PDF file: extraction, chunking, metadata
+        Process a PDF file: extraction, chunking, metadata with enhanced logging
         
         Args:
             file_path: Path to PDF file
@@ -797,12 +927,15 @@ class PDFProcessor:
                 'performOCR': False
             }
         
+        logger.info(f"Processing file: {file_path}, settings: {settings}")
+        
         try:
             # Check file size
             if isinstance(file_path, str) and os.path.exists(file_path):
                 file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
                 
                 if file_size_mb > self.MAX_FILE_SIZE_MB:
+                    logger.error(f"File too large: {file_size_mb:.1f} MB, max: {self.MAX_FILE_SIZE_MB} MB")
                     raise ValueError(f"File too large: {file_size_mb:.1f} MB. Maximum allowed size is {self.MAX_FILE_SIZE_MB} MB.")
                 
                 if file_size_mb > self.WARN_FILE_SIZE_MB:
@@ -811,8 +944,10 @@ class PDFProcessor:
                         progress_callback(f"Large file ({file_size_mb:.1f} MB). Processing may take longer.", 0)
             
             # Validate PDF format
+            logger.debug("Validating PDF format")
             valid, message = self.validate_pdf(file_path)
             if not valid:
+                logger.error(f"Invalid PDF: {message}")
                 raise ValueError(f"Invalid PDF: {message}")
             
             # Progress wrapper
@@ -832,12 +967,15 @@ class PDFProcessor:
             
             # Extract text
             start_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
+            logger.debug(f"Memory usage before extraction: {start_memory:.2f} MB")
             
             # Create file hash for caching
             file_hash = None
             if isinstance(file_path, str) and os.path.exists(file_path):
                 file_hash = f"{os.path.getsize(file_path)}_{os.path.getmtime(file_path)}"
+                logger.debug(f"File hash for caching: {file_hash}")
             
+            logger.info("Starting text extraction")
             extraction_result = self.extract_text_from_pdf(
                 file_path, 
                 max_pages=settings.get('maxPages', 0),
@@ -855,14 +993,17 @@ class PDFProcessor:
                 progress_callback("Extracting metadata", 60)
             
             # Extract DOI, ISBN
+            logger.info("Extracting metadata identifiers")
             extracted_text = extraction_result['text']
             identifiers = self.extract_identifiers(extracted_text, file_hash)
+            logger.info(f"Extracted identifiers: {identifiers}")
             
             # Progress update
             if progress_callback:
                 progress_callback("Creating chunks with page tracking", 65)
             
             # Create chunks with page tracking
+            logger.info(f"Creating chunks with settings: size={settings.get('chunkSize', 1000)}, overlap={settings.get('chunkOverlap', 200)}")
             chunks_with_pages = self.chunk_text_with_pages(
                 extracted_text,
                 extraction_result['pages'],
@@ -872,6 +1013,7 @@ class PDFProcessor:
             
             # Validate chunks - remove empty chunks
             chunks_with_pages = [chunk for chunk in chunks_with_pages if chunk.get('text', '').strip()]
+            logger.info(f"Created {len(chunks_with_pages)} non-empty chunks")
             
             # Progress update
             if progress_callback:
@@ -879,8 +1021,9 @@ class PDFProcessor:
             
             # Force garbage collection
             gc.collect()
+            logger.debug("Forced garbage collection after processing")
 
-            return {
+            result = {
                 'text': extracted_text,
                 'chunks': chunks_with_pages,
                 'metadata': {
@@ -891,12 +1034,14 @@ class PDFProcessor:
                 },
                 'pages': extraction_result['pages']
             }
+            
+            logger.info(f"Processing complete: {len(result['text'])} chars, {len(result['chunks'])} chunks, {result['metadata']} metadata")
+            return result
         except Exception as e:
-            logger.error(f"Error in PDF processing: {str(e)}")
+            logger.error(f"Error in PDF processing: {str(e)}", exc_info=True)
             
             # Force garbage collection
             gc.collect()
             
             # Throw with context
             raise ValueError(f"Failed to process PDF: {str(e)}")
-
