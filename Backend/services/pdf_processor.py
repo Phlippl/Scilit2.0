@@ -388,6 +388,47 @@ class PDFProcessor:
         
         return None
     
+    def extract_identifiers_only(self, filepath, max_pages=10):
+        """
+        Extrahiert nur DOI und ISBN aus den ersten Seiten eines PDFs
+        
+        Args:
+            filepath: Pfad zur PDF-Datei
+            max_pages: Maximale Anzahl zu verarbeitender Seiten
+            
+        Returns:
+            dict: Dictionary mit gefundenen Identifikatoren
+        """
+        try:
+            # PDF öffnen
+            doc = fitz.open(filepath)
+            
+            # Seitenzahl begrenzen
+            pages_to_process = min(max_pages, len(doc))
+            
+            # Text aus ersten Seiten extrahieren
+            text = ""
+            for i in range(pages_to_process):
+                page = doc[i]
+                text += page.get_text() + "\n"
+            
+            # DOI und ISBN extrahieren
+            doi = self.extract_doi(text)
+            isbn = self.extract_isbn(text)
+            
+            # Dokument schließen
+            doc.close()
+            
+            return {
+                'doi': doi,
+                'isbn': isbn,
+                'pages_processed': pages_to_process,
+                'total_pages': len(doc)
+            }
+        except Exception as e:
+            logger.error(f"Error extracting identifiers: {e}")
+            return {'error': str(e)}
+
     def chunk_text_with_pages(self, text, pages_info, chunk_size=1000, overlap_size=200):
         """
         Split text into chunks with page tracking
@@ -848,3 +889,4 @@ class PDFProcessor:
             
             # Throw with context
             raise ValueError(f"Failed to process PDF: {str(e)}")
+
