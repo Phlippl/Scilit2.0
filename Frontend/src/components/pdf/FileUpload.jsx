@@ -238,132 +238,127 @@ const FileUpload = () => {
   };
 
   /**
- * Schnelle Voranalyse der Datei (nur für DOI/ISBN)
- */
-const quickAnalyzeFile = async () => {
-  if (!file) {
-    setError('Bitte wähle zuerst eine Datei aus');
-    setSnackbarOpen(true);
-    return;
-  } if (result.metadata) {
-    // Valid document types in our application
-    const validTypes = ['article', 'book', 'edited_book', 'conference', 'thesis', 
-                        'report', 'newspaper', 'website', 'interview', 'press', 'other'];
-    
-    // Mapping function similar to the one in metadata API
-    const typeMapping = {
-      'journal-article': 'article',
-      'book': 'book',
-      'book-chapter': 'book',
-      'monograph': 'book',
-      'edited-book': 'edited_book',
-      'proceedings-article': 'conference',
-      'proceedings': 'conference',
-      'conference-paper': 'conference',
-      'dissertation': 'thesis',
-      'report': 'report',
-      'report-component': 'report',
-      'journal': 'article',
-      'newspaper-article': 'newspaper',
-      'website': 'website',
-      'peer-review': 'article',
-      'standard': 'report',
-      'dataset': 'other',
-      'posted-content': 'other',
-      'reference-entry': 'other'
-    };
-    
-    // Sanitize the type
-    if (result.metadata.type) {
-      if (!validTypes.includes(result.metadata.type)) {
-        // Try to map the type
-        const mappedType = typeMapping[result.metadata.type] || 
-                           (result.metadata.type.includes('book') ? 'book' : 
-                           (result.metadata.type.includes('journal') ? 'article' : 'other'));
-        
-        console.log(`Sanitizing type from ${result.metadata.type} to ${mappedType}`);
-        result.metadata.type = mappedType;
-      }
-    } else {
-      // Set a default type if none exists
-      result.metadata.type = detectDocumentType(result.metadata) || 'other';
+   * Schnelle Voranalyse der Datei (nur für DOI/ISBN)
+   */
+  const quickAnalyzeFile = async () => {
+    if (!file) {
+      setError('Bitte wähle zuerst eine Datei aus');
+      setSnackbarOpen(true);
+      return;
     }
-    
-    setMetadata({
-      ...result.metadata,
-      type: result.metadata.type // Use the sanitized type
-    });
-  }
 
-  setProcessing(true);
-  setCurrentStep(1); // Zu Vorverarbeitungsschritt wechseln
-  setProcessingStage('Identifikatoren extrahieren...');
-  setProcessingProgress(10);
-  
-  try {
-    // Formular nur mit Datei und Einstellung für schnelle Analyse
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('data', JSON.stringify({
-      quickScan: true,
-      maxPages: 10 // Nur die ersten 10 Seiten für DOI/ISBN durchsuchen
-    }));
+    setProcessing(true);
+    setCurrentStep(1); // Zu Vorverarbeitungsschritt wechseln
+    setProcessingStage('Identifikatoren extrahieren...');
+    setProcessingProgress(10);
     
-    // Anfrage an den Endpunkt für schnelle Analyse mit Fehlerbehandlung
-    const response = await fetch('/api/documents/quick-analyze', {
-      method: 'POST',
-      body: formData
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || `Server-Fehler: ${response.status}`);
-    }
-    
-    const result = await response.json();
-    
-    // Extrahierte Identifikatoren speichern
-    setExtractedIdentifiers({
-      doi: result.identifiers?.doi,
-      isbn: result.identifiers?.isbn
-    });
-    
-    // Temporäre Dokument-ID für spätere Verarbeitung speichern
-    setTempDocumentId(result.temp_id);
-    
-    // Metadaten setzen und bearbeiten
-    if (result.metadata && Object.keys(result.metadata).length > 0) {
-      setMetadata({
-        ...result.metadata,
-        type: result.metadata.type || detectDocumentType(result.metadata) || 'other'
+    try {
+      // Formular nur mit Datei und Einstellung für schnelle Analyse
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('data', JSON.stringify({
+        quickScan: true,
+        maxPages: 10 // Nur die ersten 10 Seiten für DOI/ISBN durchsuchen
+      }));
+      
+      // Anfrage an den Endpunkt für schnelle Analyse mit Fehlerbehandlung
+      const response = await fetch('/api/documents/quick-analyze', {
+        method: 'POST',
+        body: formData
       });
-    } else {
-      // Leere Metadaten erstellen, wenn keine gefunden wurden
-      createEmptyMetadata({
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Server-Fehler: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      
+      // Extrahierte Identifikatoren speichern
+      setExtractedIdentifiers({
         doi: result.identifiers?.doi,
         isbn: result.identifiers?.isbn
       });
+      
+      // Temporäre Dokument-ID für spätere Verarbeitung speichern
+      setTempDocumentId(result.temp_id);
+      
+      // Metadaten setzen und bearbeiten
+      if (result.metadata && Object.keys(result.metadata).length > 0) {
+        // Valid document types in our application
+        const validTypes = ['article', 'book', 'edited_book', 'conference', 'thesis', 
+                          'report', 'newspaper', 'website', 'interview', 'press', 'other'];
+        
+        // Mapping function similar to the one in metadata API
+        const typeMapping = {
+          'journal-article': 'article',
+          'book': 'book',
+          'book-chapter': 'book',
+          'monograph': 'book',
+          'edited-book': 'edited_book',
+          'proceedings-article': 'conference',
+          'proceedings': 'conference',
+          'conference-paper': 'conference',
+          'dissertation': 'thesis',
+          'report': 'report',
+          'report-component': 'report',
+          'journal': 'article',
+          'newspaper-article': 'newspaper',
+          'website': 'website',
+          'peer-review': 'article',
+          'standard': 'report',
+          'dataset': 'other',
+          'posted-content': 'other',
+          'reference-entry': 'other'
+        };
+        
+        // Sanitize the type
+        if (result.metadata.type) {
+          if (!validTypes.includes(result.metadata.type)) {
+            // Try to map the type
+            const mappedType = typeMapping[result.metadata.type] || 
+                            (result.metadata.type.includes('book') ? 'book' : 
+                            (result.metadata.type.includes('journal') ? 'article' : 'other'));
+            
+            console.log(`Sanitizing type from ${result.metadata.type} to ${mappedType}`);
+            result.metadata.type = mappedType;
+          }
+        } else {
+          // Set a default type if none exists
+          result.metadata.type = detectDocumentType(result.metadata) || 'other';
+        }
+        
+        setMetadata({
+          ...result.metadata,
+          type: result.metadata.type // Use the sanitized type
+        });
+      } else {
+        // Leere Metadaten erstellen, wenn keine gefunden wurden
+        createEmptyMetadata({
+          doi: result.identifiers?.doi,
+          isbn: result.identifiers?.isbn
+        });
+      }
+      
+      setProcessingStage('Identifikatoren extrahiert');
+      setProcessingProgress(100);
+      setCurrentStep(2); // Zu Metadaten-Schritt wechseln
+      
+    } catch (error) {
+      console.error('Fehler bei der schnellen Analyse:', error);
+      setProcessingError(`Fehler bei der Voranalyse: ${error.message}`);
+      
+      // Trotz Fehler zum Metadaten-Schritt wechseln, falls wir eine temporäre ID haben
+      if (tempDocumentId) {
+        createEmptyMetadata();
+        setCurrentStep(2);
+      } else {
+        setCurrentStep(0); // Zurück zum Upload-Schritt
+      }
+    } finally {
+      setProcessing(false);
     }
-    
-    setProcessingStage('Identifikatoren extrahiert');
-    setProcessingProgress(100);
-    setCurrentStep(2); // Zu Metadaten-Schritt wechseln
-    
-  } catch (error) {
-    console.error('Fehler bei der schnellen Analyse:', error);
-    setProcessingError(`Fehler bei der Voranalyse: ${error.message}`);
-    
-    // Trotz Fehler zum Metadaten-Schritt wechseln, falls wir eine temporäre ID haben
-    if (tempDocumentId) {
-      createEmptyMetadata();
-      setCurrentStep(2);
-    } else {
-      setCurrentStep(0); // Zurück zum Upload-Schritt
-    }
-  } finally {
-    setProcessing(false);
-  }
-};
+  };
   
   /**
    * Dateiauswahl behandeln
