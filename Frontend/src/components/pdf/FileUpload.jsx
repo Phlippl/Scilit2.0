@@ -238,76 +238,84 @@ const FileUpload = () => {
   };
 
   /**
-   * Schnelle Voranalyse der Datei (nur für DOI/ISBN)
-   */
-  const quickAnalyzeFile = async () => {
-    if (!file) {
-      setError('Bitte wähle zuerst eine Datei aus');
-      setSnackbarOpen(true);
-      return;
-    }
+ * Schnelle Voranalyse der Datei (nur für DOI/ISBN)
+ */
+const quickAnalyzeFile = async () => {
+  if (!file) {
+    setError('Bitte wähle zuerst eine Datei aus');
+    setSnackbarOpen(true);
+    return;
+  }
 
-    setProcessing(true);
-    setCurrentStep(1); // Zu Vorverarbeitungsschritt wechseln
-    setProcessingStage('Identifikatoren extrahieren...');
-    setProcessingProgress(10);
+  setProcessing(true);
+  setCurrentStep(1); // Zu Vorverarbeitungsschritt wechseln
+  setProcessingStage('Identifikatoren extrahieren...');
+  setProcessingProgress(10);
+  
+  try {
+    // Formular nur mit Datei und Einstellung für schnelle Analyse
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('data', JSON.stringify({
+      quickScan: true,
+      maxPages: 10 // Nur die ersten 10 Seiten für DOI/ISBN durchsuchen
+    }));
     
-    try {
-      // Formular nur mit Datei und Einstellung für schnelle Analyse
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('data', JSON.stringify({
-        quickScan: true,
-        maxPages: 10 // Nur die ersten 10 Seiten für DOI/ISBN durchsuchen
-      }));
-      
-      // Anfrage an den neuen Endpunkt für schnelle Analyse
-      const response = await fetch('/api/documents/quick-analyze', {
-        method: 'POST',
-        body: formData
+    // Anfrage an den Endpunkt für schnelle Analyse mit Fehlerbehandlung
+    const response = await fetch('/api/documents/quick-analyze', {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Server-Fehler: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    
+    // Extrahierte Identifikatoren speichern
+    setExtractedIdentifiers({
+      doi: result.identifiers?.doi,
+      isbn: result.identifiers?.isbn
+    });
+    
+    // Temporäre Dokument-ID für spätere Verarbeitung speichern
+    setTempDocumentId(result.temp_id);
+    
+    // Metadaten setzen und bearbeiten
+    if (result.metadata && Object.keys(result.metadata).length > 0) {
+      setMetadata({
+        ...result.metadata,
+        type: result.metadata.type || detectDocumentType(result.metadata) || 'other'
       });
-      
-      if (!response.ok) {
-        throw new Error(`Server-Fehler: ${response.status}`);
-      }
-      
-      const result = await response.json();
-      
-      // Extrahierte Identifikatoren speichern
-      setExtractedIdentifiers({
+    } else {
+      // Leere Metadaten erstellen, wenn keine gefunden wurden
+      createEmptyMetadata({
         doi: result.identifiers?.doi,
         isbn: result.identifiers?.isbn
       });
-      
-      // Temporäre Dokument-ID für spätere Verarbeitung speichern
-      setTempDocumentId(result.temp_id);
-      
-      // Metadaten setzen und bearbeiten
-      if (result.metadata && Object.keys(result.metadata).length > 0) {
-        setMetadata({
-          ...result.metadata,
-          type: result.metadata.type || detectDocumentType(result.metadata) || 'other'
-        });
-      } else {
-        // Leere Metadaten erstellen, wenn keine gefunden wurden
-        createEmptyMetadata({
-          doi: result.identifiers?.doi,
-          isbn: result.identifiers?.isbn
-        });
-      }
-      
-      setProcessingStage('Identifikatoren extrahiert');
-      setProcessingProgress(100);
-      setCurrentStep(2); // Zu Metadaten-Schritt wechseln
-      
-    } catch (error) {
-      console.error('Fehler bei der schnellen Analyse:', error);
-      setProcessingError(`Fehler bei der Voranalyse: ${error.message}`);
-      setCurrentStep(0); // Zurück zum Upload-Schritt
-    } finally {
-      setProcessing(false);
     }
-  };
+    
+    setProcessingStage('Identifikatoren extrahiert');
+    setProcessingProgress(100);
+    setCurrentStep(2); // Zu Metadaten-Schritt wechseln
+    
+  } catch (error) {
+    console.error('Fehler bei der schnellen Analyse:', error);
+    setProcessingError(`Fehler bei der Voranalyse: ${error.message}`);
+    
+    // Trotz Fehler zum Metadaten-Schritt wechseln, falls wir eine temporäre ID haben
+    if (tempDocumentId) {
+      createEmptyMetadata();
+      setCurrentStep(2);
+    } else {
+      setCurrentStep(0); // Zurück zum Upload-Schritt
+    }
+  } finally {
+    setProcessing(false);
+  }
+};
   
   /**
    * Dateiauswahl behandeln

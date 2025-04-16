@@ -399,6 +399,7 @@ class PDFProcessor:
         Returns:
             dict: Dictionary mit gefundenen Identifikatoren
         """
+        doc = None
         try:
             # PDF öffnen
             doc = fitz.open(filepath)
@@ -416,18 +417,27 @@ class PDFProcessor:
             doi = self.extract_doi(text)
             isbn = self.extract_isbn(text)
             
-            # Dokument schließen
+            # Wichtig: Dokument am Ende schließen
+            total_pages = len(doc)
             doc.close()
+            doc = None
             
             return {
                 'doi': doi,
                 'isbn': isbn,
                 'pages_processed': pages_to_process,
-                'total_pages': len(doc)
+                'total_pages': total_pages
             }
         except Exception as e:
             logger.error(f"Error extracting identifiers: {e}")
             return {'error': str(e)}
+        finally:
+            # Sicherstellen, dass Dokument geschlossen wird
+            if doc:
+                try:
+                    doc.close()
+                except:
+                    pass
 
     def chunk_text_with_pages(self, text, pages_info, chunk_size=1000, overlap_size=200):
         """

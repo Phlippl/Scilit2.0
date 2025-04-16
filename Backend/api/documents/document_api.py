@@ -95,47 +95,17 @@ def quick_analyze():
         # Nur die ersten Seiten für DOI/ISBN durchsuchen
         max_pages = int(settings.get('maxPages', 10))
         
-        # Importieren des PDFProcessor
+        # Use PDFProcessor for extraction
         from services.pdf_processor import PDFProcessor
         pdf_processor = PDFProcessor()
         
-        # Schnelle Extraktion nur für Identifikatoren
+        # Extrahiere nur DOI/ISBN ohne vollständige Verarbeitung
         try:
-            # Öffne PDF
-            import fitz  # PyMuPDF
-            doc = fitz.open(filepath)
+            result = pdf_processor.extract_identifiers_only(filepath, max_pages)
             
-            # Seitenzahl begrenzen
-            pages_to_process = min(max_pages, len(doc))
-            
-            # Text aus ersten Seiten extrahieren
-            text = ""
-            for i in range(pages_to_process):
-                page = doc[i]
-                text += page.get_text() + "\n"
-            
-            # DOI und ISBN extrahieren
-            doi = pdf_processor.extract_doi(text)
-            isbn = pdf_processor.extract_isbn(text)
-            
-            # Dokument schließen
-            doc.close()
-            
-            result = {
-                'doi': doi,
-                'isbn': isbn,
-                'pages_processed': pages_to_process,
-                'total_pages': len(doc)
-            }
-        except Exception as e:
-            logger.error(f"Error extracting identifiers: {e}")
-            result = {'error': str(e)}
-        
-        # Falls DOI/ISBN gefunden, Metadaten abrufen
-        metadata = {}
-        try:
+            # Metadaten abrufen, falls DOI gefunden wurde
+            metadata = {}
             if result.get('doi'):
-                # Crossref-Metadaten-Funktion importieren
                 try:
                     from api.metadata import fetch_metadata_from_crossref
                     crossref_metadata = fetch_metadata_from_crossref(result['doi'])
@@ -146,13 +116,14 @@ def quick_analyze():
                     logger.warning("Metadata API nicht verfügbar")
                 except Exception as e:
                     logger.warning(f"Error fetching DOI metadata: {e}")
+            
+            # Falls ISBN gefunden, versuche OpenLibrary
             elif result.get('isbn'):
                 try:
                     import requests
-                    # OpenLibrary für ISBN-Metadaten verwenden
                     isbn = result['isbn'].replace('-', '').replace(' ', '')
                     url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
-                    response = requests.get(url)
+                    response = requests.get(url, timeout=5)
                     if response.status_code == 200:
                         data = response.json()
                         key = f"ISBN:{isbn}"
@@ -175,17 +146,25 @@ def quick_analyze():
                             }
                 except Exception as e:
                     logger.warning(f"Error fetching ISBN metadata: {e}")
+            
+            return jsonify({
+                "temp_id": temp_id,
+                "filename": filename,
+                "metadata": metadata,
+                "identifiers": result
+            })
+            
         except Exception as e:
-            logger.warning(f"Error in metadata retrieval: {e}")
-        
-        # Temp-File ID zurückgeben für späteren Prozess
-        return jsonify({
-            "temp_id": temp_id,
-            "filename": filename,
-            "metadata": metadata,
-            "identifiers": result
-        })
-        
+            logger.error(f"Error extracting identifiers: {e}")
+            
+            # Return partial result even if error occurred
+            return jsonify({
+                "temp_id": temp_id,
+                "filename": filename,
+                "metadata": {},
+                "identifiers": {"error": str(e)}
+            })
+            
     except Exception as e:
         logger.error(f"Error in quick analysis: {e}")
         return jsonify({"error": f"Failed to analyze: {str(e)}"}), 500
