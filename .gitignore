@@ -25,6 +25,8 @@ dist-ssr
 
 **/key.py
 **/.env
+uploads
+data
 .venv
 
 package-lock.json

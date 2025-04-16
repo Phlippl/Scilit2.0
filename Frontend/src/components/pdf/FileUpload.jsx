@@ -245,6 +245,54 @@ const quickAnalyzeFile = async () => {
     setError('Bitte wähle zuerst eine Datei aus');
     setSnackbarOpen(true);
     return;
+  } if (result.metadata) {
+    // Valid document types in our application
+    const validTypes = ['article', 'book', 'edited_book', 'conference', 'thesis', 
+                        'report', 'newspaper', 'website', 'interview', 'press', 'other'];
+    
+    // Mapping function similar to the one in metadata API
+    const typeMapping = {
+      'journal-article': 'article',
+      'book': 'book',
+      'book-chapter': 'book',
+      'monograph': 'book',
+      'edited-book': 'edited_book',
+      'proceedings-article': 'conference',
+      'proceedings': 'conference',
+      'conference-paper': 'conference',
+      'dissertation': 'thesis',
+      'report': 'report',
+      'report-component': 'report',
+      'journal': 'article',
+      'newspaper-article': 'newspaper',
+      'website': 'website',
+      'peer-review': 'article',
+      'standard': 'report',
+      'dataset': 'other',
+      'posted-content': 'other',
+      'reference-entry': 'other'
+    };
+    
+    // Sanitize the type
+    if (result.metadata.type) {
+      if (!validTypes.includes(result.metadata.type)) {
+        // Try to map the type
+        const mappedType = typeMapping[result.metadata.type] || 
+                           (result.metadata.type.includes('book') ? 'book' : 
+                           (result.metadata.type.includes('journal') ? 'article' : 'other'));
+        
+        console.log(`Sanitizing type from ${result.metadata.type} to ${mappedType}`);
+        result.metadata.type = mappedType;
+      }
+    } else {
+      // Set a default type if none exists
+      result.metadata.type = detectDocumentType(result.metadata) || 'other';
+    }
+    
+    setMetadata({
+      ...result.metadata,
+      type: result.metadata.type // Use the sanitized type
+    });
   }
 
   setProcessing(true);

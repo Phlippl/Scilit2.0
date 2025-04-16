@@ -18,8 +18,6 @@ metadata_bp = Blueprint('metadata', __name__, url_prefix='/api/metadata')
 # Konfigurationswerte
 CROSSREF_API_BASE_URL = "https://api.crossref.org/works"
 CROSSREF_EMAIL = os.environ.get('CROSSREF_EMAIL', 'your.email@example.com')
-OPENLIBRARY_API_BASE_URL = "https://openlibrary.org/api"
-GOOGLE_BOOKS_API_BASE_URL = "https://www.googleapis.com/books/v1/volumes"
 
 # Rate-Limiting - max. 1 Anfrage alle 2 Sekunden an CrossRef
 last_crossref_request = 0
@@ -101,123 +99,12 @@ def get_isbn_metadata(isbn):
         if not clean_isbn or len(clean_isbn) not in [10, 13]:
             return jsonify({'error': 'Invalid ISBN. ISBN must be 10 or 13 digits.'}), 400
         
-        # 1. Versuch: OpenLibrary
-        openlibrary_result = search_isbn_openlibrary(clean_isbn)
-        if openlibrary_result:
-            return jsonify(openlibrary_result)
-        
-        # 2. Versuch: Google Books
-        google_result = search_isbn_google_books(clean_isbn)
-        if google_result:
-            return jsonify(google_result)
-        
         # Keine Ergebnisse
         return jsonify({'error': f'No metadata found for ISBN {isbn}'}), 404
             
     except Exception as e:
         logger.error(f"Error retrieving ISBN metadata: {e}")
         return jsonify({"error": str(e)}), 500
-
-def search_isbn_openlibrary(isbn):
-    """ISBN in Open Library suchen"""
-    try:
-        url = f"{OPENLIBRARY_API_BASE_URL}/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
-        
-        logger.info(f"OpenLibrary search for ISBN: {isbn}")
-        response = requests.get(url)
-        
-        if response.status_code != 200:
-            return None
-        
-        data = response.json()
-        key = f"ISBN:{isbn}"
-        
-        if key in data:
-            book_data = data[key]
-            
-            # Autoren extrahieren
-            authors = []
-            if 'authors' in book_data:
-                for author in book_data['authors']:
-                    name = author.get('name', '')
-                    # Name im Format "Nachname, Vorname" umwandeln, wenn möglich
-                    name_parts = name.split(' ')
-                    if len(name_parts) > 1:
-                        formatted_name = f"{name_parts[-1]}, {' '.join(name_parts[:-1])}"
-                        authors.append({'name': formatted_name})
-                    else:
-                        authors.append({'name': name})
-            
-            # Verlag und Jahr extrahieren
-            publisher = ''
-            publicationDate = ''
-            if 'publishers' in book_data and len(book_data['publishers']) > 0:
-                publisher = book_data['publishers'][0].get('name', '')
-            
-            if 'publish_date' in book_data:
-                publicationDate = book_data['publish_date']
-            
-            return {
-                'title': book_data.get('title', ''),
-                'authors': authors,
-                'publisher': publisher,
-                'publicationDate': publicationDate,
-                'isbn': isbn,
-                'type': 'book',
-                'subtitle': book_data.get('subtitle', ''),
-                'abstract': book_data.get('notes', '')
-            }
-        
-        return None
-    
-    except Exception as e:
-        logger.error(f"Error in OpenLibrary ISBN search: {e}")
-        return None
-
-def search_isbn_google_books(isbn):
-    """ISBN in Google Books suchen"""
-    try:
-        url = f"{GOOGLE_BOOKS_API_BASE_URL}?q=isbn:{isbn}"
-        
-        logger.info(f"Google Books search for ISBN: {isbn}")
-        response = requests.get(url)
-        
-        if response.status_code != 200:
-            return None
-        
-        data = response.json()
-        
-        if 'items' in data and len(data['items']) > 0:
-            book = data['items'][0]['volumeInfo']
-            
-            # Autoren extrahieren
-            authors = []
-            if 'authors' in book:
-                for author_name in book['authors']:
-                    # Name im Format "Nachname, Vorname" umwandeln, wenn möglich
-                    name_parts = author_name.split(' ')
-                    if len(name_parts) > 1:
-                        formatted_name = f"{name_parts[-1]}, {' '.join(name_parts[:-1])}"
-                        authors.append({'name': formatted_name})
-                    else:
-                        authors.append({'name': author_name})
-            
-            return {
-                'title': book.get('title', ''),
-                'authors': authors,
-                'publisher': book.get('publisher', ''),
-                'publicationDate': book.get('publishedDate', ''),
-                'isbn': isbn,
-                'type': 'book',
-                'subtitle': book.get('subtitle', ''),
-                'abstract': book.get('description', '')
-            }
-        
-        return None
-    
-    except Exception as e:
-        logger.error(f"Error in Google Books ISBN search: {e}")
-        return None
 
 def format_crossref_metadata(metadata):
     """CrossRef-Metadaten in einheitliches Format umwandeln"""
@@ -233,18 +120,45 @@ def format_crossref_metadata(metadata):
             else:
                 title = metadata['title']
         
-        # Dokumenttyp ermitteln
-        document_type = 'other'
+        # Dokumenttyp ermitteln und standardisieren
+        document_type = 'article'  # Default to article
         crossref_type = metadata.get('type', '').lower()
         
-        if 'journal-article' in crossref_type:
-            document_type = 'article'
-        elif 'proceedings' in crossref_type:
-            document_type = 'conference'
-        elif any(book_type in crossref_type for book_type in ['book', 'monograph']):
+        # Mapping von CrossRef-Typen zu unseren Anwendungstypen
+        type_mapping = {
+            'journal-article': 'article',
+            'book': 'book',
+            'book-chapter': 'book',
+            'monograph': 'book',
+            'edited-book': 'edited_book',
+            'proceedings-article': 'conference',
+            'proceedings': 'conference',
+            'conference-paper': 'conference',
+            'dissertation': 'thesis',
+            'report': 'report',
+            'report-component': 'report',
+            'journal': 'article',
+            'newspaper-article': 'newspaper',
+            'website': 'website',
+            'peer-review': 'article',
+            'standard': 'report',
+            'posted-content': 'other',
+            'reference-entry': 'other'
+        }
+        
+        # Versuchen, den Typ zu mappen
+        if crossref_type in type_mapping:
+            document_type = type_mapping[crossref_type]
+        elif 'book' in crossref_type:
             document_type = 'book'
-        elif 'dissertation' in crossref_type:
+        elif 'journal' in crossref_type or 'article' in crossref_type:
+            document_type = 'article'
+        elif 'conference' in crossref_type or 'proceedings' in crossref_type:
+            document_type = 'conference'
+        elif 'thesis' in crossref_type or 'dissertation' in crossref_type:
             document_type = 'thesis'
+        
+        logger.info(f"Mapped document type from CrossRef '{crossref_type}' to '{document_type}'")
         
         # Publikationsdatum extrahieren
         publication_date = ''
@@ -278,7 +192,7 @@ def format_crossref_metadata(metadata):
         result = {
             'title': title,
             'authors': metadata.get('author', []),
-            'type': document_type,
+            'type': document_type,  # Standardisierter Dokumenttyp
             'publicationDate': publication_date,
             'publisher': metadata.get('publisher', ''),
             'journal': journal,

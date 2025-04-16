@@ -111,7 +111,7 @@ export const formatCrossRefMetadata = (metadata) => {
       title: '',
       doi: metadata.DOI || '',
       url: metadata.URL || '',
-      type: metadata.type || '',
+      type: 'article', // Default to article
       publicationDate: '',
       authors: [],
       journal: '',
@@ -131,6 +131,37 @@ export const formatCrossRefMetadata = (metadata) => {
       } else {
         result.title = metadata.title;
       }
+    }
+    
+    // Map CrossRef type to our application's types
+    if (metadata.type) {
+      // Map CrossRef types to our application types
+      const typeMapping = {
+        'journal-article': 'article',
+        'book': 'book',
+        'book-chapter': 'book',
+        'monograph': 'book',
+        'edited-book': 'edited_book',
+        'proceedings-article': 'conference',
+        'proceedings': 'conference',
+        'conference-paper': 'conference',
+        'dissertation': 'thesis',
+        'report': 'report',
+        'report-component': 'report',
+        'journal': 'article',
+        'newspaper-article': 'newspaper',
+        'website': 'website',
+        'peer-review': 'article',
+        'standard': 'report',
+        'dataset': 'other',
+        'posted-content': 'other',
+        'reference-entry': 'other'
+      };
+      
+      // Use mapping if available, otherwise use default 'article' or 'other'
+      result.type = typeMapping[metadata.type] || 
+                   (metadata.type.includes('book') ? 'book' : 
+                   (metadata.type.includes('journal') ? 'article' : 'other'));
     }
     
     // Extract journal/container title
@@ -189,12 +220,14 @@ export const formatCrossRefMetadata = (metadata) => {
       }
     }
     
+    console.log("Formatted metadata type:", result.type);
     return result;
   } catch (error) {
     console.error('Error formatting CrossRef metadata:', error);
     return null;
   }
 };
+
 
 /**
  * Search for metadata using a free text query

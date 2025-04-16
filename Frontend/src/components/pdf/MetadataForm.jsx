@@ -65,6 +65,64 @@ const MetadataForm = ({ metadata, onChange }) => {
   // Dokumenttyp mit Fallback
   const documentType = metadata.type || 'other';
   
+  // Prüfen und korrigieren des Dokumenttyps
+  useEffect(() => {
+    // Map CrossRef document types to our application's types
+    const crossRefTypeMapping = {
+      'journal-article': 'article',
+      'book-chapter': 'book',
+      'monograph': 'book',
+      'edited-book': 'edited_book',
+      'proceedings-article': 'conference',
+      'proceedings': 'conference',
+      'conference-paper': 'conference',
+      'dissertation': 'thesis'
+    };
+    
+    // Check if the value is in the CrossRef mapping
+    if (newType in crossRefTypeMapping) {
+      newType = crossRefTypeMapping[newType];
+    } 
+    // Or try to detect the right type from keywords
+    else if (!documentTypes.some(type => type.id === newType)) {
+      if (newType.includes('book')) {
+        newType = 'book';
+      } else if (newType.includes('journal') || newType.includes('article')) {
+        newType = 'article';
+      } else if (newType.includes('conference') || newType.includes('proceedings')) {
+        newType = 'conference';
+      } else if (newType.includes('thesis') || newType.includes('dissertation')) {
+        newType = 'thesis';
+      } else {
+        console.warn(`Unknown document type: ${newType}, defaulting to 'article'`);
+        newType = 'article';
+      }
+    }
+    
+    // Statt nur den Typ zu ändern, behalten wir alle vorhandenen Metadaten
+    onChange('type', newType);',
+      'edited-book': 'edited_book',
+      'proceedings-article': 'conference',
+      'proceedings': 'conference',
+      'conference-paper': 'conference',
+      'dissertation': 'thesis'
+    };
+  ); 
+
+    // Sanitize document type if needed
+    if (metadata?.type) {
+      const validTypes = documentTypes.map(type => type.id);
+      if (!validTypes.includes(metadata.type)) {
+        // Try to map the type
+        let newType = crossRefTypeMapping[metadata.type] || 'article';
+        console.log(`Sanitizing document type from ${metadata.type} to ${newType}`);
+        
+        // Update the type
+        onChange('type', newType);
+      }
+    }
+  }, [metadata?.type, onChange]);
+  
   /**
    * Konfigurationsobjekt für die dynamischen Felder basierend auf dem Dokumenttyp
    */
@@ -207,17 +265,67 @@ const MetadataForm = ({ metadata, onChange }) => {
   // Aktive Konfiguration für den aktuellen Dokumenttyp
   const activeConfig = typeConfigs[documentType] || typeConfigs.other;
 
-  // Bei Änderungen der Metadaten alle Felder aktualisieren
   useEffect(() => {
-    // Sammle alle Felder aus den Metadaten
-    const fields = { ...metadata };
-    setAllFields(fields);
+    if (metadata) {
+      console.log("Current metadata state:", metadata);
+      // Check for any problematic values
+      if (metadata.type && !['article', 'book', 'edited_book', 'conference', 'thesis', 
+                            'report', 'newspaper', 'website', 'interview', 'press', 'other']
+                            .includes(metadata.type)) {
+        console.error(`Invalid document type detected in metadata: ${metadata.type}`);
+      }
+    }
   }, [metadata]);
+  
+  // Additionally, add a try/catch around the setMetadata call in your FileUpload.jsx component
+  try {
+    // Make sure the type is valid before setting to state
+    const validTypes = ['article', 'book', 'edited_book', 'conference', 'thesis', 
+                      'report', 'newspaper', 'website', 'interview', 'press', 'other'];
+    
+    const sanitizedMetadata = {
+      ...result.metadata,
+      // Ensure type is valid
+      type: validTypes.includes(result.metadata.type) ? 
+            result.metadata.type : 
+            detectDocumentType(result.metadata) || 'article'
+    };
+
+    setMetadata(sanitizedMetadata);
+  } catch (error) {
+    console.error("Error setting metadata:", error);
+    // Create fallback metadata
+    createEmptyMetadata({
+      doi: result.identifiers?.doi,
+      isbn: result.identifiers?.isbn
+    });
+  }
 
   // Typ des Dokuments ändern
   const handleTypeChange = (event) => {
-    // Statt nur den Typ zu ändern, behalten wir alle vorhandenen Metadaten
-    onChange('type', event.target.value);
+    // Map any invalid types to valid ones
+    let newType = event.target.value;
+    
+    // Handle special values that may come from CrossRef
+    if (newType === 'journal-article') {
+      newType = 'article';
+    } else if (newType.includes('book') && newType !== 'book' && newType !== 'edited_book') {
+      newType = 'book';
+    } else if (newType.includes('conference') && newType !== 'conference') {
+      newType = 'conference';
+    }
+    
+    // Check if newType is in the valid options
+    const validTypes = ['article', 'book', 'edited_book', 'conference', 'thesis', 
+                       'report', 'newspaper', 'website', 'interview', 'press', 'other'];
+    
+    if (!validTypes.includes(newType)) {
+      console.warn(`Invalid type detected: ${newType}, defaulting to 'article'`);
+      newType = 'article';
+    }
+    
+    // Now use the sanitized type
+    onChange('type', newType);
   };
   
   // Hilfsfunktion für die Datumsformatierung
@@ -530,3 +638,275 @@ export const detectDocumentType = (metadata) => {
 };
 
 export default MetadataForm;
+
+// Aktive Konfiguration für den aktuellen Dokumenttyp
+const activeConfig = typeConfigs[documentType] || typeConfigs.other;
+
+// Bei Änderungen der Metadaten alle Felder aktualisieren
+useEffect(() => {
+  if (!metadata) return;
+  
+  // Sammle alle Felder aus den Metadaten
+  const fields = { ...metadata };
+  
+  // Stellen Sie sicher, dass der Dokumenttyp gültig ist
+  if (fields.type) {
+    const validTypes = documentTypes.map(t => t.id);
+    if (!validTypes.includes(fields.type)) {
+      // Mapping für CrossRef-Typen
+      const typeMapping = {
+        'journal-article': 'article',
+        'book-chapter': 'book',
+        'monograph': 'book',
+        'edited-book': 'edited_book',
+        'proceedings-article': 'conference',
+        'proceedings': 'conference',
+        'conference-paper': 'conference',
+        'dissertation': 'thesis'
+      };
+      
+      // Korrigieren des Typs
+      if (fields.type in typeMapping) {
+        fields.type = typeMapping[fields.type];
+        console.log(`Corrected document type from ${metadata.type} to ${fields.type}`);
+        
+        // Update the metadata
+        onChange('type', fields.type);
+      } else {
+        // Fallback auf 'article'
+        fields.type = 'article';
+        console.log(`Unknown document type ${metadata.type}, defaulting to 'article'`);
+        
+        // Update the metadata
+        onChange('type', 'article');
+      }
+    }
+  }
+  
+  setAllFields(fields);
+}, [metadata, onChange, documentTypes]);
+
+// Typ des Dokuments ändern
+const handleTypeChange = (event) => {
+  // Map any invalid types to valid ones
+  let newType = event.target.value;
+  
+  // Handle special values that may come from CrossRef
+  const crossRefTypeMapping = {
+    'journal-article': 'article',
+    'book-chapter': 'book',
+    'monograph': 'book
+
+    // src/components/pdf/FileUpload.jsx
+// Add this modified version of handleMetadataChange to sanitize document type 
+
+/**
+ * Metadatenänderungen behandeln
+ */
+const handleMetadataChange = (field, value) => {
+  // Datumsfelder formatieren
+  let formattedValue = value;
+  if (field === 'publicationDate' || field === 'date' || 
+      field === 'conferenceDate' || field === 'lastUpdated' || 
+      field === 'accessDate') {
+    formattedValue = formatToISODate(value);
+  }
+
+  // Überprüfen und korrigieren des Dokumenttyps
+  if (field === 'type') {
+    const validTypes = [
+      'article', 'book', 'edited_book', 'conference', 'thesis', 
+      'report', 'newspaper', 'website', 'interview', 'press', 'other'
+    ];
+    
+    // Korrigieren des Typs, falls ungültig
+    if (!validTypes.includes(value)) {
+      // Mapping für CrossRef-Typen
+      const typeMapping = {
+        'journal-article': 'article',
+        'book-chapter': 'book',
+        'monograph': 'book',
+        'edited-book': 'edited_book',
+        'proceedings-article': 'conference',
+        'proceedings': 'conference',
+        'conference-paper': 'conference',
+        'dissertation': 'thesis'
+      };
+      
+      // Korrigieren des Typs
+      if (value in typeMapping) {
+        formattedValue = typeMapping[value];
+        console.log(`Corrected document type from ${value} to ${formattedValue}`);
+      } else if (value.includes('book')) {
+        formattedValue = 'book';
+      } else if (value.includes('journal') || value.includes('article')) {
+        formattedValue = 'article';
+      } else {
+        // Fallback auf 'article'
+        formattedValue = 'article';
+        console.log(`Unknown document type ${value}, defaulting to 'article'`);
+      }
+    }
+  }
+
+  setMetadata(prev => ({
+    ...prev,
+    [field]: formattedValue,
+  }));
+};
+
+// Also add a useEffect hook to log and fix metadata issues on load/update
+useEffect(() => {
+  if (metadata) {
+    console.log("Current metadata:", metadata);
+    
+    // Fix document type if it's invalid
+    if (metadata.type) {
+      const validTypes = [
+        'article', 'book', 'edited_book', 'conference', 'thesis', 
+        'report', 'newspaper', 'website', 'interview', 'press', 'other'
+      ];
+      
+      if (!validTypes.includes(metadata.type)) {
+        console.error(`Invalid document type detected: ${metadata.type}`);
+        
+        // Mapping für CrossRef-Typen
+        const typeMapping = {
+          'journal-article': 'article',
+          'book-chapter': 'book',
+          'monograph': 'book',
+          'edited-book': 'edited_book',
+          'proceedings-article': 'conference',
+          'proceedings': 'conference',
+          'conference-paper': 'conference',
+          'dissertation': 'thesis'
+        };
+        
+        // Korrigieren des Typs
+        let correctedType = 'article'; // Default
+        
+        if (metadata.type in typeMapping) {
+          correctedType = typeMapping[metadata.type];
+        } else if (metadata.type.includes('book')) {
+          correctedType = 'book';
+        } else if (metadata.type.includes('journal') || metadata.type.includes('article')) {
+          correctedType = 'article';
+        }
+        
+        console.log(`Correcting document type from ${metadata.type} to ${correctedType}`);
+        
+        // Update the metadata with corrected type
+        setMetadata(prev => ({
+          ...prev,
+          type: correctedType
+        }));
+      }
+    }
+  }
+}, [metadata]);
+
+// Modified quickAnalyzeFile function to handle crossref type mapping
+const quickAnalyzeFile = async () => {
+  if (!file) {
+    setError('Bitte wähle zuerst eine Datei aus');
+    setSnackbarOpen(true);
+    return;
+  }
+
+  setProcessing(true);
+  setCurrentStep(1); // Zu Vorverarbeitungsschritt wechseln
+  setProcessingStage('Identifikatoren extrahieren...');
+  setProcessingProgress(10);
+  
+  try {
+    // Formular nur mit Datei und Einstellung für schnelle Analyse
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('data', JSON.stringify({
+      quickScan: true,
+      maxPages: 10 // Nur die ersten 10 Seiten für DOI/ISBN durchsuchen
+    }));
+    
+    // Anfrage an den neuen Endpunkt für schnelle Analyse
+    const response = await fetch('/api/documents/quick-analyze', {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Server-Fehler: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    
+    // Extrahierte Identifikatoren speichern
+    setExtractedIdentifiers({
+      doi: result.identifiers?.doi,
+      isbn: result.identifiers?.isbn
+    });
+    
+    // Temporäre Dokument-ID für spätere Verarbeitung speichern
+    setTempDocumentId(result.temp_id);
+    
+    // Metadaten korrigieren und setzen, wenn vorhanden
+    if (result.metadata && Object.keys(result.metadata).length > 0) {
+      // Sanitize document type if needed
+      const validTypes = [
+        'article', 'book', 'edited_book', 'conference', 'thesis', 
+        'report', 'newspaper', 'website', 'interview', 'press', 'other'
+      ];
+      
+      // Mapping function similar to the one in metadata API
+      const typeMapping = {
+        'journal-article': 'article',
+        'book-chapter': 'book',
+        'monograph': 'book',
+        'edited-book': 'edited_book',
+        'proceedings-article': 'conference',
+        'proceedings': 'conference',
+        'conference-paper': 'conference',
+        'dissertation': 'thesis'
+      };
+      
+      let documentType = result.metadata.type || 'article';
+      
+      // Sanitize the type
+      if (!validTypes.includes(documentType)) {
+        // Try to map the type
+        if (documentType in typeMapping) {
+          documentType = typeMapping[documentType];
+        } else if (documentType.includes('book')) {
+          documentType = 'book';
+        } else if (documentType.includes('journal') || documentType.includes('article')) {
+          documentType = 'article';
+        } else {
+          documentType = 'article'; // Default
+        }
+        
+        console.log(`Sanitized document type from ${result.metadata.type} to ${documentType}`);
+      }
+      
+      // Update the metadata with corrected type
+      setMetadata({
+        ...result.metadata,
+        type: documentType
+      });
+    } else {
+      // Leere Metadaten erstellen, wenn keine gefunden wurden
+      createEmptyMetadata({
+        doi: result.identifiers?.doi,
+        isbn: result.identifiers?.isbn
+      });
+    }
+    
+    setProcessingStage('Identifikatoren extrahiert');
+    setProcessingProgress(100);
+    setCurrentStep(2); // Zu Metadaten-Schritt wechseln
+  } catch (error) {
+    console.error('Fehler bei der schnellen Analyse:', error);
+    setProcessingError(`Fehler bei der Voranalyse: ${error.message}`);
+    setCurrentStep(0); // Zurück zum Upload-Schritt
+  } finally {
+    setProcessing(false);
+  }
+};
