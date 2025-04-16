@@ -106,8 +106,6 @@ def create_app():
 
     # Register blueprints
     # Import blueprints here to avoid circular imports
-    from api.documents.document_processing import get_executor
-    from api.documents.document_processing import documents_bp
     from api.documents import documents_bp, get_executor
     from api.metadata import metadata_bp
     from api.query import query_bp

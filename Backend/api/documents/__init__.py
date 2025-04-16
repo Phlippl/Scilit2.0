@@ -1,7 +1,10 @@
+# Import the blueprint from document_api.py, not document_processing.py
+from .document_api import documents_bp
+
+# Import other functions
 from .document_processing import (
     process_pdf_background, 
-    get_executor, 
-    documents_bp
+    get_executor
 )
 from .document_status import (
     processing_status, 
@@ -19,9 +22,9 @@ from .document_analysis import (
 )
 
 __all__ = [
+    'documents_bp',
     'process_pdf_background',
     'get_executor',
-    'documents_bp',
     'processing_status',
     'processing_status_lock',
     'save_status_to_file',
