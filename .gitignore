@@ -23,7 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 
+**/test_db_connection.py
+
 **/key.py
+
 **/.env
 uploads
 data
