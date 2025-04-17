@@ -1,15 +1,14 @@
+# Backend/api/auth.py (Aktualisiert)
 from flask import Blueprint, jsonify, request, current_app
 import logging
 import jwt
 import datetime
-from services.auth_service import AuthService
+from services.authentication import get_auth_manager
+import services.user_service as user_service
 
 logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
-
-# Create UserService instance
-user_service = AuthService()
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
@@ -25,8 +24,11 @@ def register():
         if field not in data or not data[field]:
             return jsonify({"error": f"Field '{field}' is required"}), 400
     
+    # Hole den Auth Manager
+    auth_manager = get_auth_manager()
+    
     # Create user
-    user, error = user_service.create_user(
+    user, error = auth_manager.create_user(
         email=data['email'],
         password=data['password'],
         name=data['name']
@@ -38,9 +40,9 @@ def register():
     # Create JWT token
     secret_key = current_app.config['SECRET_KEY']
     token = jwt.encode({
-        'sub': user['id'],
-        'email': user['email'],
-        'name': user['name'],
+        'sub': user.id,
+        'email': user.email,
+        'name': user.name,
         'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)
     }, secret_key, algorithm='HS256')
     
@@ -49,7 +51,49 @@ def register():
         token = token.decode('utf-8')
     
     return jsonify({
-        "user": user,
+        "user": user.to_dict(),
+        "token": token
+    }), 201
+
+@auth_bp.route('/login', methods=['POST'])
+def login():
+    """Log in a user"""
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON"}), 400
+    
+    data = request.get_json()
+    
+    # Check required fields
+    if 'email' not in data or 'password' not in data:
+        return jsonify({"error": "Email and password are required"}), 400
+    
+    # Hole den Auth Manager
+    auth_manager = get_auth_manager()
+    
+    # Authenticate user
+    user, error = auth_manager.authenticate_user(
+        email=data['email'],
+        password=data['password']
+    )
+    
+    if error:
+        return jsonify({"error": error}), 401
+    
+    # Create JWT token
+    secret_key = current_app.config['SECRET_KEY']
+    token = jwt.encode({
+        'sub': user.id,
+        'email': user.email,
+        'name': user.name,
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(days=7)
+    }, secret_key, algorithm='HS256')
+    
+    # Convert bytes to string if necessary
+    if isinstance(token, bytes):
+        token = token.decode('utf-8')
+    
+    return jsonify({
+        "user": user.to_dict(),
         "token": token
     }), 201
 

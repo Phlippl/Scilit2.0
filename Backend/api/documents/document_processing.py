@@ -14,7 +14,8 @@ from datetime import datetime
 from pathlib import Path
 
 # Import required services and modules
-from services.pdf_processor import PDFProcessor
+from services.pdf import get_pdf_processor
+from services.pdf.processor import ProcessingSettings
 from services.vector_db import store_document_chunks, delete_document as delete_from_vector_db
 from .document_status import update_document_status, cleanup_status, processing_status, processing_status_lock, save_status_to_file
 from .document_validation import format_metadata_for_storage, format_authors
@@ -54,12 +55,6 @@ def get_executor():
 def process_pdf_background(filepath, document_id, metadata, settings):
     """
     Process PDF file in background thread with improved error handling
-    
-    Args:
-        filepath: Path to the PDF file
-        document_id: Document ID
-        metadata: Document metadata
-        settings: Processing settings
     """
     # Enable garbage collection
     gc.enable()
@@ -70,15 +65,10 @@ def process_pdf_background(filepath, document_id, metadata, settings):
     
     with app.app_context():
         try:
-            # Initialisiere die Verarbeitungseinstellungen
-            processing_settings = {
-                'maxPages': int(settings.get('maxPages', 0)),
-                'performOCR': bool(settings.get('performOCR', False)),
-                'chunkSize': int(settings.get('chunkSize', 1000)),
-                'chunkOverlap': int(settings.get('chunkOverlap', 200))
-            }
+            # Get PDF processor instance
+            pdf_processor = get_pdf_processor()
             
-            # Aktualisiere den Status zu Beginn
+            # Update status
             update_document_status(
                 document_id=document_id,
                 status="processing",
@@ -86,38 +76,34 @@ def process_pdf_background(filepath, document_id, metadata, settings):
                 message="Starting PDF processing..."
             )
             
-            # Erstelle PDF-Processor
-            pdf_processor = PDFProcessor()
-            
-            # Validiere PDF
-            update_document_status(
-                document_id=document_id,
-                status="processing",
-                progress=10,
-                message="Validating PDF..."
-            )
-            
-            is_valid, validation_result = pdf_processor.validate_pdf(filepath)
-            if not is_valid:
-                raise ValueError(f"Invalid PDF file: {validation_result}")
-            
-            # Fortschrittsupdate-Funktion
+            # Progress update callback
             def update_progress(message, progress):
-                update_document_status(
-                    document_id=document_id,
-                    status="processing",
-                    progress=progress,
-                    message=message
-                )
+                try:
+                    update_document_status(
+                        document_id=document_id,
+                        status="processing",
+                        progress=progress,
+                        message=message
+                    )
+                except Exception as e:
+                    logger.error(f"Error updating progress for document {document_id}: {str(e)}")
             
-            # Verarbeite die PDF-Datei
+            try:
+                # Validate PDF first
+                is_valid, validation_result = pdf_processor.validate_pdf(filepath)
+                if not is_valid:
+                    raise ValueError(f"Invalid PDF file: {validation_result}")
+            except Exception as e:
+                raise ValueError(f"Error validating PDF: {str(e)}")
+            
+            # Process PDF with progress reporting
             pdf_result = pdf_processor.process_file(
                 filepath, 
-                processing_settings,
+                settings,
                 progress_callback=update_progress
             )
             
-            # Aktualisiere Metadaten mit extrahierten Informationen
+            # Update metadata with extracted information
             if pdf_result['metadata'].get('doi') and not metadata.get('doi'):
                 metadata['doi'] = pdf_result['metadata']['doi']
             

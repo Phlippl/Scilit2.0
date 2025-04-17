@@ -116,6 +116,26 @@ def create_app():
     app.register_blueprint(query_bp)
     app.register_blueprint(auth_bp)
 
+    from services.authentication import AuthManager
+    from services.authentication.storage import JSONAuthStorage, SQLAuthStorage
+    
+    # Bestimme Storage-Backend basierend auf Konfiguration
+    auth_storage_type = os.environ.get('AUTH_STORAGE_TYPE', 'json').lower()
+    
+    if auth_storage_type == 'mysql':
+        try:
+            auth_storage = SQLAuthStorage()
+        except Exception as e:
+            logger.warning(f"MySQL-Storage konnte nicht initialisiert werden: {e}")
+            logger.warning("Fallback auf JSON-Storage")
+            auth_storage = JSONAuthStorage()
+    else:
+        auth_storage = JSONAuthStorage()
+    
+    # Erstelle AuthManager und speichere ihn in der App
+    app.auth_manager = AuthManager(storage=auth_storage)
+    logger.info(f"AuthManager initialized with {auth_storage.__class__.__name__}")
+    
     # Services
     background_executor.submit(check_embeddings)
 
@@ -136,7 +156,7 @@ def create_app():
         from api.documents.document_status import initialize_status_service
         initialize_status_service()
         create_test_user()
-        
+
     # Routes
     @app.route('/')
     def health():
