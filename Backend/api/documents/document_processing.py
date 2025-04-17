@@ -16,7 +16,7 @@ from pathlib import Path
 # Import required services and modules
 from services.pdf_processor import PDFProcessor
 from services.vector_db import store_document_chunks, delete_document as delete_from_vector_db
-from .document_status import processing_status, processing_status_lock, save_status_to_file
+from .document_status import update_document_status, cleanup_status
 from .document_validation import format_metadata_for_storage, format_authors
 
 # Import metadata retrieval functions
@@ -98,33 +98,26 @@ def process_pdf_background(filepath, document_id, metadata, settings):
                     logger.error(f"Error saving error metadata for {document_id}: {write_err}")
                 return
         
-            # Update status
-            with processing_status_lock:
-                processing_status[document_id] = {
-                    "status": "processing",
-                    "progress": 0,
-                    "message": "Starting PDF processing..."
-                }
-                # Save status to file
-                save_status_to_file(document_id, processing_status[document_id])
+            update_document_status(
+                document_id=document_id,
+                status="processing",
+                progress=0,
+                message="Starting PDF processing..."
+            )
             
             # Progress update callback with improved error handling
             def update_progress(message, progress):
                 try:
-                    with processing_status_lock:
-                        processing_status[document_id] = {
-                            "status": "processing",
-                            "progress": progress,
-                            "message": message
-                        }
-                        # Save status to file
-                        save_status_to_file(document_id, processing_status[document_id])
+                    update_document_status(
+                        document_id=document_id,
+                        status="processing",
+                        progress=progress,
+                        message=message
+                    )
                 except Exception as e:
                     logger.error(f"Error updating progress for document {document_id}: {str(e)}")
-            
-            # Process PDF file
-            pdf_processor = PDFProcessor()
-            
+                        
+                      
             try:
                 # Validate PDF first
                 is_valid, validation_result = pdf_processor.validate_pdf(filepath)
@@ -231,14 +224,12 @@ def process_pdf_background(filepath, document_id, metadata, settings):
             
             # Final status update
             if chunks_stored:
-                with processing_status_lock:
-                    processing_status[document_id] = {
-                        "status": "completed",
-                        "progress": 100,
-                        "message": "Document processing completed"
-                    }
-                    # Save status to file
-                    save_status_to_file(document_id, processing_status[document_id])
+                update_document_status(
+                    document_id=document_id,
+                    status="completed",
+                    progress=100,
+                    message="Document processing completed"
+                )
             else:
                 with processing_status_lock:
                     processing_status[document_id] = {
@@ -258,38 +249,18 @@ def process_pdf_background(filepath, document_id, metadata, settings):
                         logger.info(f"Cleaned up status for document {doc_id} via direct method")
 
             # Clean up status after 10 minutes
-            def cleanup_status():
-                time.sleep(600)  # 10 minutes
-                with processing_status_lock:
-                    if document_id in processing_status:
-                        del processing_status[document_id]
-            
-            try:
-                # Check if executor is still active
-                if not executor._shutdown:
-                    executor.submit(cleanup_status)
-                else:
-                    # Alternative: Use timer if executor is already shut down
-                    import threading
-                    cleanup_timer = threading.Timer(600, lambda: cleanup_status_direct(document_id))
-                    cleanup_timer.daemon = True  # Daemon thread ends when main program ends
-                    cleanup_timer.start()
-                    logger.info(f"Using Timer instead of Executor for cleanup of document {document_id}")
-            except Exception as e:
-                logger.warning(f"Could not schedule cleanup for document {document_id}: {e}")
+            cleanup_status(document_id, 600)
             
         except Exception as e:
             logger.error(f"Error in background processing for document {document_id}: {str(e)}", exc_info=True)
             
             # Update status to error with detailed message
-            with processing_status_lock:
-                processing_status[document_id] = {
-                    "status": "error",
-                    "progress": 0,
-                    "message": f"Error processing document: {str(e)}"
-                }
-                # Save status to file
-                save_status_to_file(document_id, processing_status[document_id])
+            update_document_status(
+                document_id=document_id,
+                status="error",
+                progress=0,
+                message=f"Error processing document: {str(e)}"
+            )
                 
             # Try to save error information to metadata file
             try:

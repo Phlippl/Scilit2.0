@@ -8,10 +8,14 @@ from .document_processing import (
 )
 from .document_status import (
     processing_status, 
+    update_document_status,
     processing_status_lock, 
     save_status_to_file, 
+    cleanup_status,
     get_document_status
+    register_status_callback,
 )
+
 from .document_validation import (
     validate_metadata, 
     format_metadata_for_storage

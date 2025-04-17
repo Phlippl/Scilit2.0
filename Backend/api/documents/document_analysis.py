@@ -13,6 +13,7 @@ from typing import Dict, Any
 # Import services and utilities
 from services.pdf_processor import PDFProcessor
 from utils.helpers import timeout_handler
+from .document_status import update_document_status, cleanup_status
 
 # Import metadata retrieval functions
 try:
@@ -46,26 +47,22 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
     with app.app_context():
         try:
             # Update status
-            with processing_status_lock:
-                processing_status[document_id] = {
-                    "status": "processing",
-                    "progress": 10,
-                    "message": "Analyzing document..."
-                }
-                # Save status to file
-                save_status_to_file(document_id, processing_status[document_id])
+            update_document_status(
+                document_id=document_id,
+                status="processing",
+                progress=10,
+                message="Analyzing document..."
+            )
             
             # Define progress update callback
             def update_progress(message: str, progress: int):
                 try:
-                    with processing_status_lock:
-                        processing_status[document_id] = {
-                            "status": "processing",
-                            "progress": progress,
-                            "message": message
-                        }
-                        # Save status to file
-                        save_status_to_file(document_id, processing_status[document_id])
+                    update_document_status(
+                        document_id=document_id,
+                        status="processing",
+                        progress=progress,
+                        message=message
+                    )
                 except Exception as e:
                     logger.error(f"Error updating progress for document {document_id}: {str(e)}")
             
@@ -136,25 +133,13 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
             }
             
             # Store result for retrieval
-            with processing_status_lock:
-                processing_status[document_id] = {
-                    "status": "completed",
-                    "progress": 100,
-                    "message": "Analysis complete",
-                    "result": result_data
-                }
-                
-                # Save results to separate file (status file might have size limits)
-                results_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_results.json")
-                with open(results_file, 'w') as f:
-                    json.dump(result_data, f, indent=2, default=str)
-                
-                # Save status to file
-                save_status_to_file(document_id, {
-                    "status": "completed",
-                    "progress": 100,
-                    "message": "Analysis complete"
-                })
+            update_document_status(
+                document_id=document_id,
+                status="completed",
+                progress=100,
+                message="Analysis complete",
+                result=result_data
+            )
             
             # Clean up temporary file
             try:
@@ -170,15 +155,13 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
             logger.error(f"Error in document analysis: {e}", exc_info=True)
             
             # Update status to reflect error
-            with processing_status_lock:
-                processing_status[document_id] = {
-                    "status": "error",
-                    "progress": 0,
-                    "error": str(e),
-                    "message": f"Error analyzing document: {str(e)}"
-                }
-                # Save status to file
-                save_status_to_file(document_id, processing_status[document_id])
+            update_document_status(
+                document_id=document_id,
+                status="error",
+                progress=0,
+                message=f"Error analyzing document: {str(e)}",
+                result={"error": str(e)}
+            )
             
             # Clean up temporary file
             try:
@@ -202,7 +185,10 @@ def get_analysis_results(document_id: str) -> Dict[str, Any]:
     """
     from flask import current_app
     from .document_status import processing_status, processing_status_lock
+    from .document_status import get_document_status
 
+    status_data = get_document_status(document_id)
+    
     # Check in-memory status first
     with processing_status_lock:
         if document_id in processing_status:
@@ -220,6 +206,8 @@ def get_analysis_results(document_id: str) -> Dict[str, Any]:
     
     # If not in memory, check results file
     results_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_results.json")
+    with open(results_file, 'w') as f:
+        json.dump(result_data, f, indent=2, default=str)
     status_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_status.json")
     
     try:

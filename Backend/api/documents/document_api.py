@@ -23,6 +23,7 @@ from services.vector_db import delete_document as delete_from_vector_db
 # Import submodules
 from .document_processing import process_pdf_background, get_executor
 from .document_analysis import analyze_document_background
+from .document_status import update_document_status, cleanup_status
 from .document_status import (
     processing_status_lock, processing_status, 
     save_status_to_file, get_document_status
@@ -38,7 +39,7 @@ CORS(documents_bp, resources={r"/*": {"origins": "*"}})
 def get_document_status_api(document_id):
     """Gets the processing status of a document"""
     logger.info(f"Fetching status for document ID: {document_id}")
-    return get_document_status(document_id)
+    return jsonify(get_document_status(document_id))
 
 @documents_bp.route('/cancel-processing/<document_id>', methods=['POST'])
 def cancel_processing(document_id):
@@ -49,16 +50,13 @@ def cancel_processing(document_id):
         logger.info(f"Canceling processing for document {document_id} by user {user_id}")
         
         # Update status to canceled
-        with processing_status_lock:
-            if document_id in processing_status:
-                processing_status[document_id] = {
-                    "status": "canceled",
-                    "progress": 0,
-                    "message": "Processing canceled by user"
-                }
-                # Save status to file
-                save_status_to_file(document_id, processing_status[document_id])
-                logger.info(f"Processing for document {document_id} canceled successfully")
+        update_document_status(
+            document_id=document_id,
+            status="canceled",
+            progress=0,
+            message="Processing canceled by user"
+        )
+        logger.info(f"Processing for document {document_id} canceled successfully")
         
         return jsonify({"success": True, "message": "Processing canceled"})
     except Exception as e:
@@ -442,18 +440,13 @@ def save_document():
             )
             
             # Save initial status
-            initial_status = {
-                "status": "processing",
-                "progress": 0,
-                "message": "Document upload complete. Processing started..."
-            }
-            with processing_status_lock:
-                processing_status[document_id] = initial_status
-                
-                # Save status with app context
-                with app.app_context():
-                    save_status_to_file(document_id, initial_status)
-                    logger.debug(f"Initial processing status saved for document {document_id}")
+            update_document_status(
+                document_id=document_id,
+                status="processing",
+                progress=0,
+                message="Document upload complete. Processing started..."
+            )
+            logger.debug(f"Initial processing status saved for document {document_id}")
             
             logger.info(f"Document {document_id} successfully uploaded and processing started")
             return jsonify({
@@ -525,10 +518,8 @@ def delete_document_api(document_id):
             logger.error(f"Error deleting from vector database: {e}")
         
         # Clear any processing status
-        with processing_status_lock:
-            if document_id in processing_status:
-                del processing_status[document_id]
-                logger.debug(f"Removed processing status for document {document_id}")
+        cleanup_status(document_id, 0)  # Sofortige Bereinigung
+        logger.debug(f"Removed processing status for document {document_id}")
         
         logger.info(f"Document {document_id} successfully deleted")
         return jsonify({"success": True, "message": f"Document {document_id} deleted successfully"})
@@ -614,15 +605,13 @@ def update_document(document_id):
                     }
                     
                     # Update status
-                    update_status = {
-                        "status": "processing",
-                        "progress": 0,
-                        "message": "Updating document metadata..."
-                    }
-                    with processing_status_lock:
-                        processing_status[document_id] = update_status
-                        save_status_to_file(document_id, update_status)
-                        logger.debug(f"Updated processing status for document {document_id}")
+                    update_document_status(
+                        document_id=document_id,
+                        status="processing",
+                        progress=0,
+                        message="Updating document metadata..."
+                    )
+                    logger.debug(f"Updated processing status for document {document_id}")
                     
                     # Start background processing
                     logger.info(f"Starting background processing for document update {document_id}")
@@ -705,14 +694,12 @@ def analyze_document():
         logger.info(f"Saved temporary file for analysis: {temp_filepath}")
         
         # Create job entry for async processing
-        with processing_status_lock:
-            processing_status[document_id] = {
-                "status": "processing",
-                "progress": 0,
-                "message": "Starting analysis..."
-            }
-            # Save status to file
-            save_status_to_file(document_id, processing_status[document_id])
+        update_document_status(
+            document_id=document_id,
+            status="processing",
+            progress=0,
+            message="Starting analysis..."
+        )
         
         # If it's just analysis (not full processing), do it in a background thread
         get_executor().submit(
