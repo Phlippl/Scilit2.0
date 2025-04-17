@@ -12,8 +12,8 @@ from .document_status import (
     processing_status_lock, 
     save_status_to_file, 
     cleanup_status,
-    get_document_status
-    register_status_callback,
+    get_document_status,
+    register_status_callback
 )
 
 from .document_validation import (
