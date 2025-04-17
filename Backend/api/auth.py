@@ -4,7 +4,7 @@ import logging
 import jwt
 import datetime
 from services.authentication import get_auth_manager
-import services.user_service as user_service
+import services.authentication as user_service
 
 logger = logging.getLogger(__name__)
 

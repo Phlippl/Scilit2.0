@@ -16,10 +16,8 @@ from .document_status import (
     register_status_callback
 )
 
-from .document_validation import (
-    validate_metadata, 
-    format_metadata_for_storage
-)
+from utils.metadata_utils import validate_metadata, format_metadata_for_storage
+
 from .document_analysis import (
     analyze_document_background, 
     get_analysis_results

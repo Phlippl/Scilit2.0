@@ -6,7 +6,7 @@ import gc
 from datetime import datetime
 from typing import Dict, Any, Optional, Callable
 
-from services.pdf_processor import PDFProcessor
+from services.pdf.processor import PDFProcessor
 from api.documents.document_status import update_document_status
 
 logger = logging.getLogger(__name__)

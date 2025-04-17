@@ -135,13 +135,13 @@ def create_app():
     # Erstelle AuthManager und speichere ihn in der App
     app.auth_manager = AuthManager(storage=auth_storage)
     logger.info(f"AuthManager initialized with {auth_storage.__class__.__name__}")
-    
+
     # Services
     background_executor.submit(check_embeddings)
 
     # Create a test user on app startup (replacing before_first_request)
     def create_test_user():
-        from services.auth_service import AuthService
+        from services.authentication import AuthService
         auth = AuthService()
         email = os.environ.get('VITE_TEST_USER_EMAIL', 'user@example.com')
         if not auth.get_user_by_email(email):

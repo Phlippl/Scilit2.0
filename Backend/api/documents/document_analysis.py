@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Dict, Any
 
 # Import services and utilities
-from services.pdf_processor import PDFProcessor
+from services.pdf.processor import PDFProcessor
 from utils.helpers import timeout_handler
 from .document_status import update_document_status, cleanup_status
 

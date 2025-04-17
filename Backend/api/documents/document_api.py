@@ -111,7 +111,7 @@ def quick_analyze():
         logger.info(f"Extraction settings: max_pages={max_pages}, perform_ocr={perform_ocr}")
         
         # Use PDFProcessor for extraction
-        from services.pdf_processor import PDFProcessor
+        from services.pdf.processor import PDFProcessor
         pdf_processor = PDFProcessor()
         
         # Extrahiere nur DOI/ISBN ohne vollständige Verarbeitung

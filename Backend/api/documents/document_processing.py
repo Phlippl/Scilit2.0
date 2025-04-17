@@ -18,7 +18,7 @@ from services.pdf import get_pdf_processor
 from services.pdf.processor import ProcessingSettings
 from services.vector_db import store_document_chunks, delete_document as delete_from_vector_db
 from .document_status import update_document_status, cleanup_status, processing_status, processing_status_lock, save_status_to_file
-from .document_validation import format_metadata_for_storage, format_authors
+from utils.metadata_utils import validate_metadata, format_metadata_for_storage
 
 # Import metadata retrieval functions
 try:
@@ -177,8 +177,8 @@ def process_pdf_background(filepath, document_id, metadata, settings):
                     # Aktualisiere Metadaten mit Chunk-Infos
                     metadata['processed'] = store_result
                     metadata['num_chunks'] = len(pdf_result['chunks'])
-                    metadata['chunk_size'] = processing_settings.get('chunkSize', 1000)
-                    metadata['chunk_overlap'] = processing_settings.get('chunkOverlap', 200)
+                    metadata['chunk_size'] = settings.get('chunkSize', 1000)
+                    metadata['chunk_overlap'] = settings.get('chunkOverlap', 200)
                 except Exception as e:
                     logger.error(f"Error storing chunks for document {document_id}: {str(e)}")
                     update_progress(f"Error storing chunks: {str(e)}", 95)
