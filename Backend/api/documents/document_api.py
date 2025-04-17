@@ -134,9 +134,10 @@ def quick_analyze():
                     crossref_metadata = fetch_metadata_from_crossref(doi)
                     logger.debug(f"CrossRef metadata result: {crossref_metadata}")
                     
+                    # Wenn Metadaten gefetched wurden
                     if crossref_metadata:
                         logger.info(f"Successfully fetched metadata for DOI {doi}")
-                        from .document_validation import format_metadata_for_storage
+                        from utils.metadata_utils import format_metadata_for_storage
                         metadata = format_metadata_for_storage(crossref_metadata)
                         logger.debug(f"Formatted metadata: {metadata}")
                 except ImportError as e:

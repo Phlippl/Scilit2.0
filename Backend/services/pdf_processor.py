@@ -1,4 +1,5 @@
-# Backend/services/pdf_processor.py (aktualisiert)
+# Folgende Änderungen müssen in pdf_processor.py vorgenommen werden:
+
 import os
 import re
 import logging
@@ -334,7 +335,7 @@ class PDFProcessor:
         Args:
             text: Text to search
             cache_key: Optional key for caching
-            
+                
         Returns:
             dict: Found identifiers
         """
@@ -356,10 +357,10 @@ class PDFProcessor:
                 oldest_key = next(iter(self._identifier_cache))
                 self._identifier_cache.pop(oldest_key)
                 logger.debug(f"Removed oldest identifier cache entry: {oldest_key}")
-                
+                    
             self._identifier_cache[cache_key] = result
             logger.debug(f"Cached identifier result with key: {cache_key}")
-            
+                
         return result
     
     @staticmethod
@@ -380,7 +381,7 @@ class PDFProcessor:
             DeprecationWarning, stacklevel=2
         )
         return extract_doi(text)
-    
+
     @staticmethod
     def extract_isbn(text):
         """
