@@ -1,7 +1,9 @@
-import re
 import logging
 import requests
 from crossref.restful import Works
+
+# Import refactored utility modules
+from utils.identifier_utils import extract_identifiers
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -14,27 +16,17 @@ class MetadataService:
         self.crossref = Works()
     
     def extract_identifiers(self, text):
-        """Extract DOI and ISBN from text"""
-        identifiers = {
-            'doi': None,
-            'isbn': None
-        }
+        """
+        Extract DOI and ISBN from text
         
-        # Extract DOI
-        doi_pattern = r'(?:doi:|https?://doi\.org/|DOI:?\s*)(10\.\d{4,}(?:\.\d+)*\/(?:(?![\"&\'<>])\S)+)'
-        doi_match = re.search(doi_pattern, text, re.IGNORECASE)
-        if doi_match:
-            identifiers['doi'] = doi_match.group(1)
-        
-        # Extract ISBN-10 or ISBN-13
-        isbn_pattern = r'(?:ISBN(?:-1[03])?:?\s*)((?:97[89][- ]?)?(?:[0-9][- ]?){9}[0-9Xx])'
-        isbn_match = re.search(isbn_pattern, text, re.IGNORECASE)
-        if isbn_match:
-            # Clean the ISBN by removing hyphens and spaces
-            isbn = isbn_match.group(1).replace('-', '').replace(' ', '')
-            identifiers['isbn'] = isbn
-        
-        return identifiers
+        Args:
+            text: Text to analyze
+            
+        Returns:
+            dict: Dictionary containing DOI and ISBN
+        """
+        # Use the refactored central function instead of local implementation
+        return extract_identifiers(text)
     
     def fetch_metadata(self, identifiers):
         """Fetch metadata from CrossRef and other sources"""

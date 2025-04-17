@@ -14,14 +14,14 @@ from pathlib import Path
 import jwt
 import traceback
 
-# Import utils and services
+# Import utils and services - aktualisiert für refactorierte Module
 from utils.helpers import allowed_file, get_safe_filepath
 from utils.auth_middleware import optional_auth, get_user_id
+from utils.metadata_utils import validate_metadata, format_metadata_for_storage
 from services.vector_db import delete_document as delete_from_vector_db
 
 # Import submodules
 from .document_processing import process_pdf_background, get_executor
-from .document_validation import validate_metadata
 from .document_analysis import analyze_document_background
 from .document_status import (
     processing_status_lock, processing_status, 

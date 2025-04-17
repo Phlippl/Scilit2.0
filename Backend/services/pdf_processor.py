@@ -1,4 +1,4 @@
-# Backend/services/pdf_processor.py
+# Backend/services/pdf_processor.py (aktualisiert)
 import os
 import re
 import logging
@@ -12,7 +12,10 @@ import pytesseract
 from PIL import Image
 import io
 
-# Import fitz (PyMuPDF) with proper error handling
+# Import refactored utility modules
+from utils.identifier_utils import extract_doi, extract_isbn, extract_identifiers
+
+# Try to import fitz (PyMuPDF) with proper error handling
 try:
     import fitz  # PyMuPDF
 except ImportError:
@@ -341,13 +344,9 @@ class PDFProcessor:
             return self._identifier_cache[cache_key]
         
         logger.info("Extracting identifiers from text")
-        # Extract DOI and ISBN
-        doi = self.extract_doi(text)
-        isbn = self.extract_isbn(text)
         
-        logger.info(f"Extracted identifiers: DOI={doi}, ISBN={isbn}")
-        
-        result = {'doi': doi, 'isbn': isbn}
+        # Use refactored central function instead of local implementation
+        result = extract_identifiers(text)
         
         # Cache result if key provided
         if cache_key:
@@ -366,7 +365,7 @@ class PDFProcessor:
     @staticmethod
     def extract_doi(text):
         """
-        Extract DOI from text using regex with enhanced patterns and logging
+        Extract DOI from text (delegates to central implementation)
         
         Args:
             text: Text to search
@@ -374,48 +373,18 @@ class PDFProcessor:
         Returns:
             str: Found DOI or None
         """
-        if not text:
-            logger.debug("No text provided for DOI extraction")
-            return None
-        
-        # DOI patterns - Enhanced for better matching
-        doi_patterns = [
-            # Standard DOI format with word boundary
-            r'\b(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)\b',
-            
-            # DOI with label
-            r'\bDOI:\s*(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)\b',
-            
-            # DOI with doi.org URL
-            r'\bdoi\.org\/(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)\b',
-            
-            # DOI in URL with https
-            r'https?:\/\/doi\.org\/(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)',
-            
-            # DOI in parentheses - common in academic papers
-            r'\(doi:\s*(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)\)',
-            
-            # DOI with Digital Object Identifier label
-            r'Digital\s+Object\s+Identifier.{0,20}(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)',
-            
-            # DOI in German text
-            r'(?:DOI|doi)[-:]?\s*(10\.\d{4,}(?:\.\d+)*\/(?:(?!["&\'<>])\S)+)'
-        ]
-        
-        for idx, pattern in enumerate(doi_patterns):
-            matches = re.search(pattern, text, re.IGNORECASE)
-            if matches and matches.group(1):
-                doi = matches.group(1).strip()
-                logger.info(f"DOI found with pattern {idx+1}: {doi}")
-                return doi
-        
-        logger.debug("No DOI found in text")
-        return None
+        import warnings
+        warnings.warn(
+            "PDFProcessor.extract_doi ist veraltet. "
+            "Verwende stattdessen utils.identifier_utils.extract_doi",
+            DeprecationWarning, stacklevel=2
+        )
+        return extract_doi(text)
     
     @staticmethod
     def extract_isbn(text):
         """
-        Extract ISBN from text using enhanced regex patterns and logging
+        Extract ISBN from text (delegates to central implementation)
         
         Args:
             text: Text to search
@@ -423,45 +392,18 @@ class PDFProcessor:
         Returns:
             str: Found ISBN or None
         """
-        if not text:
-            logger.debug("No text provided for ISBN extraction")
-            return None
-        
-        # ISBN patterns - Enhanced for better matching
-        isbn_patterns = [
-            # ISBN-13 with label
-            r'\bISBN(?:-13)?[:\s]*(97[89][- ]?(?:\d[- ]?){9}\d)\b',
-            
-            # ISBN-10 with label
-            r'\bISBN(?:-10)?[:\s]*(\d[- ]?(?:\d[- ]?){8}[\dX])\b',
-            
-            # Bare ISBN-13 with word boundary
-            r'\b(97[89][- ]?(?:\d[- ]?){9}\d)\b',
-            
-            # Bare ISBN-10 with word boundary  
-            r'\b(\d[- ]?(?:\d[- ]?){8}[\dX])\b',
-            
-            # ISBN in German text
-            r'(?:ISBN|isbn)[-:]?\s*((?:97[89][- ]?)?(?:\d[- ]?){9}[\dX])',
-            
-            # ISBN with International Standard Book Number label
-            r'International\s+Standard\s+Book\s+Number.{0,20}((?:97[89][- ]?)?(?:\d[- ]?){9}[\dX])'
-        ]
-        
-        for idx, pattern in enumerate(isbn_patterns):
-            matches = re.search(pattern, text, re.IGNORECASE)
-            if matches and matches.group(1):
-                # Remove hyphens and spaces
-                isbn = matches.group(1).replace('-', '').replace(' ', '')
-                logger.info(f"ISBN found with pattern {idx+1}: {isbn}")
-                return isbn
-        
-        logger.debug("No ISBN found in text")
-        return None
+        import warnings
+        warnings.warn(
+            "PDFProcessor.extract_isbn ist veraltet. "
+            "Verwende stattdessen utils.identifier_utils.extract_isbn",
+            DeprecationWarning, stacklevel=2
+        )
+        return extract_isbn(text)
+    
     
     def extract_identifiers_only(self, filepath, max_pages=10):
         """
-        Extrahiert nur DOI und ISBN aus den ersten Seiten eines PDFs mit detailliertem Logging
+        Extrahiert nur DOI und ISBN aus den ersten Seiten eines PDFs
         
         Args:
             filepath: Pfad zur PDF-Datei
@@ -490,9 +432,10 @@ class PDFProcessor:
                 logger.debug(f"Extracted {len(page_text)} chars from page {i+1}")
                 text += page_text + "\n"
             
-            # First try extracting from first few pages
-            doi = self.extract_doi(text)
-            isbn = self.extract_isbn(text)
+            # Identifikatoren extrahieren mit zentraler Funktion
+            identifiers = extract_identifiers(text)
+            doi = identifiers['doi']
+            isbn = identifiers['isbn']
             
             # If no DOI/ISBN found and we didn't process all pages, try front and back matter
             if (not doi and not isbn) and pages_to_process < len(doc):
@@ -506,11 +449,12 @@ class PDFProcessor:
                         back_pages_text += page.get_text() + "\n"
                         logger.debug(f"Extracted {len(page.get_text())} chars from back page {i+1}")
                 
-                # Try to find identifiers in back matter
+                # Try to find identifiers in back matter with zentraler Funktion
+                back_identifiers = extract_identifiers(back_pages_text)
                 if not doi:
-                    doi = self.extract_doi(back_pages_text)
+                    doi = back_identifiers['doi']
                 if not isbn:
-                    isbn = self.extract_isbn(back_pages_text)
+                    isbn = back_identifiers['isbn']
             
             # Wichtig: Dokument am Ende schließen
             total_pages = len(doc)
@@ -525,6 +469,7 @@ class PDFProcessor:
             }
             logger.info(f"Identifier extraction complete: {result}")
             return result
+            
         except Exception as e:
             logger.error(f"Error extracting identifiers: {e}", exc_info=True)
             return {'error': str(e)}

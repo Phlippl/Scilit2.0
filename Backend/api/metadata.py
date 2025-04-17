@@ -9,6 +9,9 @@ import os
 from flask import Blueprint, jsonify, request, current_app
 from urllib.parse import quote
 
+# Import refactored utility modules
+from utils.metadata_utils import format_crossref_metadata
+
 # Logger einrichten
 logger = logging.getLogger(__name__)
 
@@ -77,7 +80,7 @@ def get_doi_metadata(doi):
         if not crossref_metadata:
             return jsonify({"error": "DOI not found"}), 404
             
-        # Metadaten formatieren
+        # Metadaten formatieren mit zentralisierter Funktion
         metadata = format_crossref_metadata(crossref_metadata)
         
         if metadata:
@@ -105,110 +108,6 @@ def get_isbn_metadata(isbn):
     except Exception as e:
         logger.error(f"Error retrieving ISBN metadata: {e}")
         return jsonify({"error": str(e)}), 500
-
-def format_crossref_metadata(metadata):
-    """CrossRef-Metadaten in einheitliches Format umwandeln"""
-    if not metadata:
-        return None
-    
-    try:
-        # Grundlegende Informationen extrahieren
-        title = ""
-        if 'title' in metadata:
-            if isinstance(metadata['title'], list) and metadata['title']:
-                title = metadata['title'][0]
-            else:
-                title = metadata['title']
-        
-        # Dokumenttyp ermitteln und standardisieren
-        document_type = 'article'  # Default to article
-        crossref_type = metadata.get('type', '').lower()
-        
-        # Mapping von CrossRef-Typen zu unseren Anwendungstypen
-        type_mapping = {
-            'journal-article': 'article',
-            'book': 'book',
-            'book-chapter': 'book',
-            'monograph': 'book',
-            'edited-book': 'edited_book',
-            'proceedings-article': 'conference',
-            'proceedings': 'conference',
-            'conference-paper': 'conference',
-            'dissertation': 'thesis',
-            'report': 'report',
-            'report-component': 'report',
-            'journal': 'article',
-            'newspaper-article': 'newspaper',
-            'website': 'website',
-            'peer-review': 'article',
-            'standard': 'report',
-            'posted-content': 'other',
-            'reference-entry': 'other'
-        }
-        
-        # Versuchen, den Typ zu mappen
-        if crossref_type in type_mapping:
-            document_type = type_mapping[crossref_type]
-        elif 'book' in crossref_type:
-            document_type = 'book'
-        elif 'journal' in crossref_type or 'article' in crossref_type:
-            document_type = 'article'
-        elif 'conference' in crossref_type or 'proceedings' in crossref_type:
-            document_type = 'conference'
-        elif 'thesis' in crossref_type or 'dissertation' in crossref_type:
-            document_type = 'thesis'
-        
-        logger.info(f"Mapped document type from CrossRef '{crossref_type}' to '{document_type}'")
-        
-        # Publikationsdatum extrahieren
-        publication_date = ''
-        if 'published' in metadata:
-            date_parts = metadata['published'].get('date-parts', [[]])[0]
-            if date_parts:
-                # Format als YYYY-MM-DD oder nur Jahr
-                if len(date_parts) >= 3:
-                    publication_date = f"{date_parts[0]}-{date_parts[1]:02d}-{date_parts[2]:02d}"
-                elif len(date_parts) == 2:
-                    publication_date = f"{date_parts[0]}-{date_parts[1]:02d}-01"
-                elif len(date_parts) == 1:
-                    publication_date = f"{date_parts[0]}-01-01"
-        
-        # Journal/Container-Titel extrahieren
-        journal = ""
-        if 'container-title' in metadata:
-            if isinstance(metadata['container-title'], list) and metadata['container-title']:
-                journal = metadata['container-title'][0]
-            else:
-                journal = metadata['container-title']
-        
-        # ISBN für Bücher extrahieren
-        isbn = ""
-        if 'ISBN' in metadata:
-            if isinstance(metadata['ISBN'], list) and metadata['ISBN']:
-                isbn = metadata['ISBN'][0].replace('-', '')
-            else:
-                isbn = metadata['ISBN'].replace('-', '')
-        
-        result = {
-            'title': title,
-            'authors': metadata.get('author', []),
-            'type': document_type,  # Standardisierter Dokumenttyp
-            'publicationDate': publication_date,
-            'publisher': metadata.get('publisher', ''),
-            'journal': journal,
-            'volume': metadata.get('volume', ''),
-            'issue': metadata.get('issue', ''),
-            'pages': metadata.get('page', ''),
-            'doi': metadata.get('DOI', ''),
-            'isbn': isbn,
-            'abstract': metadata.get('abstract', '')
-        }
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error formatting CrossRef metadata: {e}")
-        return None
 
 @metadata_bp.route('/search', methods=['GET'])
 def search_metadata():
@@ -241,6 +140,7 @@ def search_metadata():
         results = []
         if 'message' in data and 'items' in data['message']:
             for item in data['message']['items']:
+                # Verwende zentralisierte Formatierungsfunktion
                 formatted = format_crossref_metadata(item)
                 if formatted:
                     results.append(formatted)
