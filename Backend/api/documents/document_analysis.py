@@ -187,57 +187,29 @@ def get_analysis_results(document_id: str) -> Dict[str, Any]:
     from .document_status import processing_status, processing_status_lock
     from .document_status import get_document_status
 
+    # Get status from central function
     status_data = get_document_status(document_id)
     
-    # Check in-memory status first
-    with processing_status_lock:
-        if document_id in processing_status:
-            status_data = processing_status[document_id]
-            
-            # If completed, return results
-            if status_data.get("status") == "completed" and "result" in status_data:
-                return {
-                    "status": "completed",
-                    "result": status_data["result"]
-                }
-            
-            # Otherwise return status
-            return status_data
+    # Check if status contains results
+    if status_data.get("status") == "completed" and "result" in status_data:
+        return {
+            "status": "completed",
+            "result": status_data["result"]
+        }
     
-    # If not in memory, check results file
+    # If not in memory and no results in status, check for results file
     results_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_results.json")
-    with open(results_file, 'w') as f:
-        json.dump(result_data, f, indent=2, default=str)
-    status_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_status.json")
-    
-    try:
-        # Check status file first
-        if os.path.exists(status_file):
-            with open(status_file, 'r') as f:
-                status_data = json.load(f)
-            
-            # If completed, load results
-            if status_data.get("status") == "completed":
-                if os.path.exists(results_file):
-                    with open(results_file, 'r') as f:
-                        results_data = json.load(f)
-                    
-                    return {
-                        "status": "completed",
-                        "result": results_data
-                    }
+    if os.path.exists(results_file):
+        try:
+            with open(results_file, 'r') as f:
+                results_data = json.load(f)
                 
-            return status_data
-        
-        # No status found
-        return {
-            "status": "error",
-            "error": "Analysis job not found"
-        }
-        
-    except Exception as e:
-        logger.error(f"Error retrieving analysis results: {e}")
-        return {
-            "status": "error",
-            "error": f"Failed to retrieve results: {str(e)}"
-        }
+            return {
+                "status": "completed",
+                "result": results_data
+            }
+        except Exception as e:
+            logger.error(f"Error reading results file: {e}")
+    
+    # If no results file found, return status as is
+    return status_data
