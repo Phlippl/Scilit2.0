@@ -6,21 +6,15 @@ import os
 import json
 import logging
 import threading
-import time
-from typing import Dict, Any, Optional, List, Union
-from flask import current_app, g
-from datetime import datetime
-from pathlib import Path
+from typing import Dict, Any, Optional, List, Union, Callable
+from flask import current_app
 from services.status_services import get_status_service
 
 logger = logging.getLogger(__name__)
 
-# Thread-safe storage for processing status
+# Thread-safe storage for processing status - kept for backward compatibility
 processing_status = {}
-processing_status_lock = None
-
-# Optional callback registry for status updates
-status_callbacks = {}
+processing_status_lock = threading.RLock()
 
 def initialize_status_service():
     """Initialisiert den StatusService mit dem richtigen Verzeichnis"""
@@ -35,8 +29,8 @@ def initialize_status_service():
         logger.error(f"Error initializing status service: {e}")
 
 def save_status_to_file(document_id, status_data):
-    """Alte Funktion für Abwärtskompatibilität"""
-    # Diese Funktion wird beibehalten, ruft aber intern den neuen Service auf
+    """Legacy Funktion für Abwärtskompatibilität"""
+    # Diese Funktion verwendet intern den neuen Service
     try:
         status_service = get_status_service()
         status = status_data.get("status", "unknown")
@@ -58,21 +52,10 @@ def save_status_to_file(document_id, status_data):
 
 def load_status_from_file(document_id: str) -> Optional[Dict[str, Any]]:
     """
-    Load document processing status from file
-    
-    Args:
-        document_id: ID of the document
-    
-    Returns:
-        dict: Status data or None if not found
+    Legacy Funktion für Abwärtskompatibilität - ruft den StatusService auf
     """
     try:
-        status_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_status.json")
-        if os.path.exists(status_file):
-            with open(status_file, 'r') as f:
-                status_data = json.load(f)
-            return status_data
-        return None
+        return get_document_status(document_id)
     except Exception as e:
         logger.error(f"Error loading status from file: {e}")
         return None
@@ -109,8 +92,8 @@ def update_document_status(
             if result is not None:
                 status_data["result"] = result
                 
-            global processing_status
-            processing_status[document_id] = status_data
+            with processing_status_lock:
+                processing_status[document_id] = status_data
         
         return success
     except Exception as e:
@@ -130,7 +113,7 @@ def get_document_status(document_id: str) -> Dict[str, Any]:
         }
 
 
-def register_status_callback(document_id: str, callback: callable) -> bool:
+def register_status_callback(document_id: str, callback: Callable) -> bool:
     """Registriert einen Callback für Status-Updates"""
     try:
         status_service = get_status_service()
@@ -145,5 +128,24 @@ def cleanup_status(document_id: str, delay_seconds: int = 600) -> None:
     try:
         status_service = get_status_service()
         status_service.cleanup_status(document_id, delay_seconds)
+        
+        # Lösche auch aus dem alten Dict für vollständige Bereinigung
+        if delay_seconds == 0:  # Sofortige Bereinigung
+            with processing_status_lock:
+                if document_id in processing_status:
+                    del processing_status[document_id]
+                    logger.debug(f"Removed document {document_id} from legacy status dict")
+        else:
+            # Verzögerte Bereinigung
+            def delayed_cleanup():
+                import time
+                time.sleep(delay_seconds)
+                with processing_status_lock:
+                    if document_id in processing_status:
+                        del processing_status[document_id]
+                        logger.debug(f"Removed document {document_id} from legacy status dict after delay")
+                        
+            threading.Thread(target=delayed_cleanup, daemon=True).start()
+            
     except Exception as e:
         logger.error(f"Error scheduling status cleanup: {e}")

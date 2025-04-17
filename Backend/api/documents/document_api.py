@@ -19,7 +19,7 @@ from utils.helpers import allowed_file, get_safe_filepath
 from utils.auth_middleware import optional_auth, get_user_id
 from utils.metadata_utils import validate_metadata, format_metadata_for_storage
 from services.vector_db import delete_document as delete_from_vector_db
-
+from services.document_db_service import DocumentDBService
 # Import submodules
 from .document_processing import process_pdf_background, get_executor
 from .document_analysis import analyze_document_background
@@ -255,25 +255,35 @@ def get_document(document_id):
         user_id = get_user_id()
         logger.info(f"Retrieving document {document_id} for user {user_id}")
         
-        # Find metadata file
-        user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
-        metadata_files = list(Path(user_upload_dir).glob(f"{document_id}_*.json"))
+        # Direkte Verwendung von DocumentDBService statt des DocumentService-Wrappers
+        document_db_service = DocumentDBService()
         
-        if not metadata_files:
-            logger.warning(f"Document {document_id} not found")
-            return jsonify({"error": "Document not found"}), 404
+        # Dokumente für User abrufen
+        documents = document_db_service.get_documents_by_user(user_id)
+        
+        # Dokument mit der spezifischen ID finden
+        document = None
+        for doc in documents:
+            if doc.get('id') == document_id:
+                document = doc
+                break
+                
+        if not document:
+            # Alternativ: Suche in der Dateisystem-Struktur
+            user_upload_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], user_id)
+            metadata_files = list(Path(user_upload_dir).glob(f"{document_id}_*.json"))
             
-        with open(metadata_files[0], 'r') as f:
-            metadata = json.load(f)
-            logger.debug(f"Retrieved metadata for document {document_id}")
+            if not metadata_files:
+                logger.warning(f"Document {document_id} not found")
+                return jsonify({"error": "Document not found"}), 404
+                
+            with open(metadata_files[0], 'r') as f:
+                document = json.load(f)
+        
+        # Processing-Status hinzufügen
+        document['processing_status'] = get_document_status(document_id)
             
-        # Check processing status
-        with processing_status_lock:
-            if document_id in processing_status:
-                metadata['processing_status'] = processing_status[document_id]
-                logger.debug(f"Added processing status to response: {processing_status[document_id]}")
-            
-        return jsonify(metadata)
+        return jsonify(document)
         
     except Exception as e:
         logger.error(f"Error retrieving document {document_id}: {e}", exc_info=True)
