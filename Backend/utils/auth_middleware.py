@@ -1,139 +1,224 @@
 # Backend/utils/auth_middleware.py
 """
-Authentication middleware for Flask to reduce code duplication across endpoints.
+Authentifizierungs-Middleware für Flask zur Reduzierung von Code-Duplikation über Endpunkte.
+Verbesserte Version mit zentralisierter Konfiguration und Fehlerbehandlung.
 """
 import os
 import jwt
 from functools import wraps
 from flask import request, jsonify, current_app, g
 import logging
+from typing import Optional, Callable, Dict, Any, Union
+
+from utils.error_handler import unauthorized, APIError
+from config import config_manager
 
 logger = logging.getLogger(__name__)
 
-def get_token_from_header():
-    """Extract JWT token from Authorization header"""
+def get_token_from_header() -> Optional[str]:
+    """
+    Extrahiert JWT-Token aus Authorization-Header
+    
+    Returns:
+        str: Token oder None, wenn kein gültiger Header gefunden wurde
+    """
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         return None
     
     token = auth_header.split(' ')[1]
     
-    # Validate token format
+    # Validiere Token-Format
     if not token or token.count('.') != 2:
+        logger.warning("Ungültiges Token-Format erhalten")
         return None
     
     return token
 
-def get_user_id():
+def get_user_id() -> str:
     """
-    Get user ID from JWT token or X-User-ID header with test user support
-    Returns user_id or 'default_user' if not authenticated
+    Holt Benutzer-ID aus JWT-Token oder X-User-ID-Header mit Test-Benutzer-Unterstützung
+    
+    Returns:
+        str: Benutzer-ID oder 'default_user', wenn nicht authentifiziert
     """
     user_id = 'default_user'
     
-    # Try to get from Authorization header first
+    # Prüfe, ob bereits in g gesetzt
+    if hasattr(g, 'user_id'):
+        return g.user_id
+    
+    # Aus Authorization-Header holen
     token = get_token_from_header()
     if token:
         try:
-            secret_key = current_app.config.get('SECRET_KEY')
+            # Hole Secret-Key aus Konfiguration
+            secret_key = config_manager.get('SECRET_KEY')
             if not secret_key:
-                logger.warning("SECRET_KEY not configured")
+                logger.warning("SECRET_KEY nicht konfiguriert")
                 return user_id
                 
             payload = jwt.decode(token, secret_key, algorithms=['HS256'])
             user_id = payload.get('sub', user_id)
+            
+            # Speichere in g für spätere Verwendung
+            g.user_id = user_id
+            g.user_email = payload.get('email')
+            g.user_name = payload.get('name')
+            
+            logger.debug(f"Benutzer aus Token erkannt: {user_id}")
         except jwt.ExpiredSignatureError:
-            logger.warning("Token has expired")
+            logger.warning("Token abgelaufen")
         except jwt.InvalidTokenError as e:
-            logger.warning(f"Invalid token: {e}")
+            logger.warning(f"Ungültiges Token: {e}")
         except Exception as e:
-            logger.error(f"Error decoding token: {e}")
+            logger.error(f"Fehler beim Decodieren des Tokens: {e}")
     
-    # Fallback to X-User-ID header
+    # Fallback auf X-User-ID-Header
     header_user_id = request.headers.get('X-User-ID')
     if header_user_id:
         user_id = header_user_id
+        logger.debug(f"Benutzer aus X-User-ID-Header: {user_id}")
     
-    # Test mode handling
-    test_user_enabled = os.environ.get('VITE_TEST_USER_ENABLED', 'false').lower() == 'true'
+    # Test-Modus-Behandlung
+    test_user_enabled = config_manager.get('TEST_USER_ENABLED', False)
     if test_user_enabled and (user_id == 'default_user'):
-        test_user_id = os.environ.get('TEST_USER_ID', 'test-user-id')
-        logger.info(f"Using test user ID: {test_user_id}")
+        test_user_id = config_manager.get('TEST_USER_ID', 'test-user-id')
+        logger.info(f"Verwende Test-Benutzer-ID: {test_user_id}")
         user_id = test_user_id
+    
+    # Speichere in g für spätere Verwendung
+    g.user_id = user_id
     
     return user_id
 
-def requires_auth(f):
+def verify_token(token: str) -> Dict[str, Any]:
     """
-    Decorator to require authentication for API endpoints
-    Sets g.user_id for use in the decorated function
-    Returns 401 if no valid authentication is provided
+    Verifiziert ein JWT-Token
+    
+    Args:
+        token: JWT-Token
+        
+    Returns:
+        dict: Token-Payload
+        
+    Raises:
+        jwt.ExpiredSignatureError: Wenn Token abgelaufen ist
+        jwt.InvalidTokenError: Wenn Token ungültig ist
+    """
+    secret_key = config_manager.get('SECRET_KEY')
+    if not secret_key:
+        raise APIError("Serverkonfigurationsfehler", 500)
+    
+    return jwt.decode(token, secret_key, algorithms=['HS256'])
+
+def requires_auth(f: Callable) -> Callable:
+    """
+    Dekorator für Endpunkte, die Authentifizierung erfordern
+    Speichert g.user_id für Verwendung im dekorierten Endpunkt
+    Gibt 401 zurück, wenn keine gültige Authentifizierung vorhanden ist
+    
+    Args:
+        f: Zu dekorierende Funktion
+        
+    Returns:
+        Dekorierte Funktion
     """
     @wraps(f)
     def decorated(*args, **kwargs):
         token = get_token_from_header()
         
         if not token:
-            return jsonify({"error": "Authentication required"}), 401
+            # Spezifische Fehlermeldung für fehlende Authentifizierung
+            return jsonify({"error": "Authentifizierung erforderlich"}), 401
         
         try:
-            # Decode token
-            secret_key = current_app.config.get('SECRET_KEY')
-            if not secret_key:
-                return jsonify({"error": "Server configuration error"}), 500
-                
-            payload = jwt.decode(token, secret_key, algorithms=['HS256'])
+            # Token decodieren
+            payload = verify_token(token)
             
-            # Store user ID in Flask's g object for use in the view function
+            # Benutzer-ID in Flask's g-Objekt speichern
             g.user_id = payload.get('sub')
             g.user_email = payload.get('email')
+            g.user_name = payload.get('name')
             
-            # Call the original function
+            # Originale Funktion aufrufen
             return f(*args, **kwargs)
             
         except jwt.ExpiredSignatureError:
-            return jsonify({"error": "Token expired"}), 401
+            return jsonify({"error": "Token abgelaufen"}), 401
         except jwt.InvalidTokenError as e:
-            return jsonify({"error": f"Invalid token: {str(e)}"}), 401
+            return jsonify({"error": f"Ungültiges Token: {str(e)}"}), 401
         except Exception as e:
-            logger.error(f"Authentication error: {e}")
-            return jsonify({"error": "Authentication failed"}), 401
+            logger.error(f"Authentifizierungsfehler: {e}")
+            return jsonify({"error": "Authentifizierung fehlgeschlagen"}), 401
     
     return decorated
 
-def optional_auth(f):
+def optional_auth(f: Callable) -> Callable:
     """
-    Decorator for endpoints that can work with or without authentication
-    Sets g.user_id if authenticated, otherwise sets it to 'default_user'
-    Never returns 401
+    Dekorator für Endpunkte, die mit oder ohne Authentifizierung funktionieren
+    Setzt g.user_id auf die erkannte ID oder 'default_user'
+    Gibt niemals 401 zurück
+    
+    Args:
+        f: Zu dekorierende Funktion
+        
+    Returns:
+        Dekorierte Funktion
     """
     @wraps(f)
     def decorated(*args, **kwargs):
-        # Get user ID and set it in g
+        # Benutzer-ID setzen und in g speichern
         g.user_id = get_user_id()
         
-        # Call the original function
+        # Originale Funktion aufrufen
         return f(*args, **kwargs)
     
     return decorated
 
-def is_admin(f):
+def is_admin(f: Callable) -> Callable:
     """
-    Decorator to require admin privileges
-    Must be used with requires_auth
+    Dekorator für Admin-Privilegien
+    Muss mit requires_auth verwendet werden
+    
+    Args:
+        f: Zu dekorierende Funktion
+        
+    Returns:
+        Dekorierte Funktion
     """
     @wraps(f)
     def decorated(*args, **kwargs):
-        # This decorator assumes requires_auth has already been applied
-        # and g.user_id is set
+        # Dieser Dekorator geht davon aus, dass requires_auth bereits angewendet wurde
+        # und g.user_id gesetzt ist
         
-        # In a real application, you would check the user's role in a database
-        # For demonstration, we'll use a simple admin user list
-        admin_users = os.environ.get('ADMIN_USERS', '').split(',')
+        # Admin-Benutzer aus Konfiguration holen
+        admin_users = config_manager.get('ADMIN_USERS', '').split(',')
         
         if not hasattr(g, 'user_id') or g.user_id not in admin_users:
-            return jsonify({"error": "Admin privileges required"}), 403
+            return jsonify({"error": "Admin-Privilegien erforderlich"}), 403
         
         return f(*args, **kwargs)
     
     return decorated
+
+def get_current_user() -> Optional[Dict[str, Any]]:
+    """
+    Holt Informationen zum aktuellen Benutzer aus dem Token
+    
+    Returns:
+        dict: Benutzerinformationen oder None
+    """
+    token = get_token_from_header()
+    if not token:
+        return None
+    
+    try:
+        payload = verify_token(token)
+        return {
+            'id': payload.get('sub'),
+            'email': payload.get('email'),
+            'name': payload.get('name')
+        }
+    except Exception:
+        return None

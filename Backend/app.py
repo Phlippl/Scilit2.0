@@ -1,20 +1,25 @@
 # Backend/app.py
-
-import os
+"""
+Hauptanwendung für das SciLit2.0-Backend mit verbesserter Initialisierung
+und sauberer Auftrennungen der Verantwortlichkeiten.
+"""
 import logging
 import time
-import threading
 import concurrent.futures
-import secrets
 import sys
-from flask import Flask, jsonify, g, Response, stream_with_context
+from flask import Flask, jsonify, g, Response, stream_with_context, request
 from flask_cors import CORS
-from dotenv import load_dotenv
 
-# Prevent .pyc files
+# Zentralisierte Konfiguration und Services
+from config import config_manager
+from services.registry import initialize_services, get
+from services.status_service import initialize_status_service
+from utils.error_handler import configure_error_handlers, APIError
+
+# Verhindere .pyc-Dateien
 sys.dont_write_bytecode = True
 
-# Logging
+# Konfiguriere Logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -25,142 +30,138 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load .env
-load_dotenv()
-
-# Environment config
-UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', './uploads')
-MAX_CONTENT_LENGTH = int(os.environ.get('MAX_CONTENT_LENGTH', 20 * 1024 * 1024))
-CHROMA_PERSIST_DIR = os.environ.get('CHROMA_PERSIST_DIR', './data/chroma')
-ALLOWED_EXTENSIONS = {'pdf'}
-
-# Executor for background tasks
+# Executor für Hintergrundaufgaben
 background_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 def initialize_nlp():
-    """Initialize and return spaCy NLP model"""
+    """Initialisiert und gibt das spaCy NLP-Modell zurück"""
     try:
         import spacy
         try:
             nlp = spacy.load("de_core_news_sm")
-            logger.info("Loaded spaCy model: de_core_news_sm")
+            logger.info("spaCy-Modell geladen: de_core_news_sm")
             return nlp
         except OSError:
             try:
                 nlp = spacy.load("en_core_web_sm")
-                logger.info("Loaded spaCy model: en_core_web_sm")
+                logger.info("spaCy-Modell geladen: en_core_web_sm")
                 return nlp
             except OSError:
-                logger.warning("Downloading en_core_web_sm...")
+                logger.warning("Lade en_core_web_sm herunter...")
                 try:
                     spacy.cli.download("en_core_web_sm")
                     return spacy.load("en_core_web_sm")
                 except Exception as e:
-                    logger.error(f"spaCy download failed: {e}")
+                    logger.error(f"spaCy-Download fehlgeschlagen: {e}")
                     return spacy.blank("en")
     except ImportError:
-        logger.warning("spaCy not available, using blank model")
+        logger.warning("spaCy nicht verfügbar, verwende leeres Modell")
         return None
 
 def check_embeddings():
-    """Check if Ollama embeddings service is available"""
+    """Prüft, ob Ollama-Embeddings-Service verfügbar ist"""
     try:
         import requests
-        url = os.environ.get('OLLAMA_API_URL', 'http://localhost:11434')
+        url = config_manager.get('OLLAMA_API_URL', 'http://localhost:11434')
         res = requests.get(f"{url}/api/version", timeout=5)
         if res.status_code == 200:
-            logger.info(f"Connected to Ollama API: {res.json()}")
+            logger.info(f"Verbindung zur Ollama-API hergestellt: {res.json()}")
         else:
-            logger.warning(f"Unexpected Ollama response: {res.status_code}")
+            logger.warning(f"Unerwartete Ollama-Antwort: {res.status_code}")
     except Exception as e:
-        logger.warning(f"Ollama check failed: {e}")
+        logger.warning(f"Ollama-Prüfung fehlgeschlagen: {e}")
 
 def init_directories():
-    """Initialize required directories"""
+    """Initialisiert benötigte Verzeichnisse"""
     try:
-        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
-        os.makedirs(os.path.join(UPLOAD_FOLDER, 'status'), exist_ok=True)
-        logger.info(f"Upload folder ready: {UPLOAD_FOLDER}")
-        logger.info(f"ChromaDB folder ready: {CHROMA_PERSIST_DIR}")
+        import os
+        
+        upload_folder = config_manager.get('UPLOAD_FOLDER', './uploads')
+        chroma_persist_dir = config_manager.get('CHROMA_PERSIST_DIR', './data/chroma')
+        
+        os.makedirs(upload_folder, exist_ok=True)
+        os.makedirs(chroma_persist_dir, exist_ok=True)
+        os.makedirs(os.path.join(upload_folder, 'status'), exist_ok=True)
+        
+        logger.info(f"Upload-Verzeichnis bereit: {upload_folder}")
+        logger.info(f"ChromaDB-Verzeichnis bereit: {chroma_persist_dir}")
     except Exception as e:
-        logger.error(f"Directory init failed: {e}")
+        logger.error(f"Verzeichnisinitialisierung fehlgeschlagen: {e}")
+
+def create_test_user(auth_manager):
+    """Erstellt einen Testbenutzer"""
+    email = config_manager.get('TEST_USER_EMAIL', 'user@example.com')
+    if not auth_manager.get_user_by_email(email):
+        auth_manager.create_user(
+            email=email,
+            password=config_manager.get('TEST_USER_PASSWORD', 'password123'),
+            name=config_manager.get('TEST_USER_NAME', 'Test User')
+        )
+        logger.info(f"Testbenutzer erstellt: {email}")
 
 def create_app():
-    """Create and configure the Flask application"""
+    """Erstellt und konfiguriert die Flask-Anwendung"""
+    # Initialisiere Verzeichnisse
     init_directories()
+    
+    # Erstelle Flask-App
     app = Flask(__name__)
 
-    # Proper CORS
-    CORS(app, origins=["http://localhost:5173", "http://localhost:5000"], supports_credentials=True)
+    # Konfiguriere CORS
+    CORS(app, 
+         origins=["http://localhost:5173", "http://localhost:5000", "http://localhost:3000"], 
+         supports_credentials=True)
 
-    # App config
+    # App-Konfiguration
     app.config.update({
-        'UPLOAD_FOLDER': UPLOAD_FOLDER,
-        'MAX_CONTENT_LENGTH': MAX_CONTENT_LENGTH,
-        'CHROMA_PERSIST_DIR': CHROMA_PERSIST_DIR,
-        'ALLOWED_EXTENSIONS': ALLOWED_EXTENSIONS,
-        'SECRET_KEY': os.environ.get('SECRET_KEY', secrets.token_hex(32)),
+        'UPLOAD_FOLDER': config_manager.get('UPLOAD_FOLDER', './uploads'),
+        'MAX_CONTENT_LENGTH': config_manager.get('MAX_CONTENT_LENGTH', 20 * 1024 * 1024),
+        'CHROMA_PERSIST_DIR': config_manager.get('CHROMA_PERSIST_DIR', './data/chroma'),
+        'ALLOWED_EXTENSIONS': config_manager.get('ALLOWED_EXTENSIONS', {'pdf'}),
+        'SECRET_KEY': config_manager.get('SECRET_KEY'),
         'NLP_MODEL': initialize_nlp()
     })
 
-    # Register blueprints
-    # Import blueprints here to avoid circular imports
-    from api.documents import documents_bp, get_executor
+    # Zentralisierte Fehlerbehandlung registrieren
+    configure_error_handlers(app)
+
+    # Blueprint-Import verzögern, um Zirkelimporte zu vermeiden
+    from api.documents.routes import documents_bp
     from api.metadata import metadata_bp
     from api.query import query_bp
     from api.auth import auth_bp
     
+    # Blueprints registrieren
     app.register_blueprint(documents_bp)
     app.register_blueprint(metadata_bp)
     app.register_blueprint(query_bp)
     app.register_blueprint(auth_bp)
 
-    from services.authentication import AuthManager
-    from services.authentication.storage import JSONAuthStorage, SQLAuthStorage
-    
-    # Bestimme Storage-Backend basierend auf Konfiguration
-    auth_storage_type = os.environ.get('AUTH_STORAGE_TYPE', 'json').lower()
-    
-    if auth_storage_type == 'mysql':
-        try:
-            auth_storage = SQLAuthStorage()
-        except Exception as e:
-            logger.warning(f"MySQL-Storage konnte nicht initialisiert werden: {e}")
-            logger.warning("Fallback auf JSON-Storage")
-            auth_storage = JSONAuthStorage()
-    else:
-        auth_storage = JSONAuthStorage()
-    
-    # Erstelle AuthManager und speichere ihn in der App
-    app.auth_manager = AuthManager(storage=auth_storage)
-    logger.info(f"AuthManager initialized with {auth_storage.__class__.__name__}")
+    # Services initialisieren
+    initialize_services()
+
+    # Mit App-Kontext aufrufen
+    with app.app_context():
+        # Status-Service initialisieren
+        initialize_status_service()
+        
+        # Auth-Manager initialisieren und Testbenutzer erstellen
+        from services.registry import get
+        auth_manager = get('auth')
+        create_test_user(auth_manager)
 
     # Services
     background_executor.submit(check_embeddings)
 
-    # Create a test user on app startup (replacing before_first_request)
-    def create_test_user():
-        from services.authentication import AuthService
-        auth = AuthService()
-        email = os.environ.get('VITE_TEST_USER_EMAIL', 'user@example.com')
-        if not auth.get_user_by_email(email):
-            auth.create_user(
-                email=email,
-                password=os.environ.get('VITE_TEST_USER_PASSWORD', 'password123'),
-                name=os.environ.get('VITE_TEST_USER_NAME', 'Test User')
-            )
-    
-    # Call it during app creation with app context
-    with app.app_context():
-        from api.documents.document_status import initialize_status_service
-        initialize_status_service()
-        create_test_user()
-
     # Routes
     @app.route('/')
     def health():
-        return jsonify({'status': 'ok', 'version': '1.1.0', 'app': 'SciLit2.0 API'})
+        return jsonify({
+            'status': 'ok', 
+            'version': '1.1.0', 
+            'app': 'SciLit2.0 API',
+            'time': time.strftime('%Y-%m-%d %H:%M:%S')
+        })
 
     @app.route('/stream-test')
     def stream():
@@ -170,54 +171,56 @@ def create_app():
                 time.sleep(0.5)
         return Response(stream_with_context(generate()), content_type='text/event-stream')
 
-    # Error handlers
-    @app.errorhandler(404)
-    def not_found(e): 
-        return jsonify({"error": "Resource not found"}), 404
-
-    @app.errorhandler(413)
-    def too_large(e): 
-        return jsonify({"error": f"File too large. Max: {MAX_CONTENT_LENGTH / (1024 * 1024)}MB"}), 413
-
-    @app.errorhandler(500)
-    def server_error(e):
-        logger.error(f"Internal server error: {e}")
-        return jsonify({"error": "Internal server error"}), 500
-
     @app.before_request
     def before():
         g.start_time = time.time()
+        g.request_id = request.headers.get('X-Request-ID') or str(time.time())
 
     @app.after_request
     def after(response):
         if hasattr(g, 'start_time'):
-            logger.info(f"Request took {time.time() - g.start_time:.4f}s")
+            duration = time.time() - g.start_time
+            logger.info(f"Anfrage dauerte {duration:.4f}s")
+            
+            # Füge Header für Verarbeitungszeit hinzu
+            response.headers['X-Processing-Time'] = f"{duration:.4f}s"
+            
+            # Füge Request-ID in Header für Debugging hinzu
+            if hasattr(g, 'request_id'):
+                response.headers['X-Request-ID'] = g.request_id
+        
         return response
 
     @app.teardown_appcontext
     def shutdown(_):
+        """Bereinigt Ressourcen beim Herunterfahren"""
         try:
-            logger.info("Shutting down executors...")
+            logger.info("Fahre Executors herunter...")
+            
+            # Executor aus Document-Controller holen und herunterfahren
             try:
+                from api.documents.controller import get_executor
                 executor = get_executor()
                 if executor and hasattr(executor, 'shutdown'):
                     executor.shutdown(wait=False)
-                    logger.info("Main executor shut down")
+                    logger.info("Haupt-Executor heruntergefahren")
             except Exception as e:
-                logger.warning(f"Executor shutdown failed: {e}")
+                logger.warning(f"Executor-Shutdown fehlgeschlagen: {e}")
 
+            # Hintergrund-Executor herunterfahren
             if background_executor:
                 background_executor.shutdown(wait=False)
-                logger.info("Background executor shut down")
+                logger.info("Hintergrund-Executor heruntergefahren")
+                
         except Exception as e:
-            logger.error(f"Global teardown failed: {e}")
+            logger.error(f"Globaler Teardown fehlgeschlagen: {e}")
 
     return app
 
 if __name__ == '__main__':
     app = create_app()
     app.run(
-        host=os.environ.get('HOST', '0.0.0.0'),
-        port=int(os.environ.get('PORT', 5000)),
-        debug=os.environ.get('DEBUG', 'True').lower() == 'true'
+        host=config_manager.get('HOST', '0.0.0.0'),
+        port=config_manager.get('PORT', 5000),
+        debug=config_manager.get('DEBUG', True)
     )
