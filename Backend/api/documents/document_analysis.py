@@ -38,38 +38,11 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
     """
     # Import app context 
     from flask import current_app
-    from .document_status import processing_status, processing_status_lock, save_status_to_file
-    from .document_validation import format_metadata_for_storage
-
-    # Create app context
     app = current_app._get_current_object()
     
     with app.app_context():
         try:
-            # Update status
-            update_document_status(
-                document_id=document_id,
-                status="processing",
-                progress=10,
-                message="Analyzing document..."
-            )
-            
-            # Define progress update callback
-            def update_progress(message: str, progress: int):
-                try:
-                    update_document_status(
-                        document_id=document_id,
-                        status="processing",
-                        progress=progress,
-                        message=message
-                    )
-                except Exception as e:
-                    logger.error(f"Error updating progress for document {document_id}: {str(e)}")
-            
-            # Process PDF to extract text, metadata, and chunks
-            pdf_processor = PDFProcessor()
-            
-            # Extract processing settings
+            # Initialisiere Verarbeitungseinstellungen
             processing_settings = {
                 'maxPages': int(settings.get('maxPages', 0)),
                 'performOCR': bool(settings.get('performOCR', False)),
@@ -77,16 +50,33 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
                 'chunkOverlap': int(settings.get('chunkOverlap', 200))
             }
             
-            # Validate PDF first
-            update_progress("Validating PDF...", 20)
-            try:
-                is_valid, validation_result = pdf_processor.validate_pdf(filepath)
-                if not is_valid:
-                    raise ValueError(f"Invalid PDF file: {validation_result}")
-            except Exception as e:
-                raise ValueError(f"Error validating PDF: {str(e)}")
+            # Aktualisiere Status
+            update_document_status(
+                document_id=document_id,
+                status="processing",
+                progress=10,
+                message="Analyzing document..."
+            )
             
-            # Process the file
+            # Definiere Fortschritts-Callback
+            def update_progress(message: str, progress: int):
+                update_document_status(
+                    document_id=document_id,
+                    status="processing",
+                    progress=progress,
+                    message=message
+                )
+            
+            # Initialisiere PDF-Processor
+            pdf_processor = PDFProcessor()
+            
+            # Validiere PDF zuerst
+            update_progress("Validating PDF...", 20)
+            is_valid, validation_result = pdf_processor.validate_pdf(filepath)
+            if not is_valid:
+                raise ValueError(f"Invalid PDF file: {validation_result}")
+            
+            # Verarbeite die Datei
             update_progress("Extracting text and metadata...", 40)
             result = pdf_processor.process_file(
                 filepath,
@@ -94,23 +84,24 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
                 progress_callback=update_progress
             )
             
-            # Attempt to fetch additional metadata
+            # Metadaten anreichern
             update_progress("Enriching metadata...", 80)
             metadata = result['metadata']
             
-            # Try to fetch additional metadata via DOI
+            # Versuche, zusätzliche Metadaten über DOI abzurufen
             if metadata.get('doi'):
                 try:
+                    from api.metadata import fetch_metadata_from_crossref
                     crossref_metadata = fetch_metadata_from_crossref(metadata['doi'])
                     if crossref_metadata:
-                        # Merge and prioritize existing metadata
+                        # Zusammenführen und bestehende Metadaten priorisieren
                         for key, value in crossref_metadata.items():
                             if not metadata.get(key) and value:
                                 metadata[key] = value
                 except Exception as e:
                     logger.warning(f"Error fetching additional metadata: {e}")
             
-            # Limit chunks to avoid overwhelming the response
+            # Begrenze Chunks in der Antwort
             MAX_CHUNKS_IN_RESPONSE = 100
             chunks = result.get('chunks', [])
             if len(chunks) > MAX_CHUNKS_IN_RESPONSE:
@@ -122,7 +113,8 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
                     'chunks': limited_chunks
                 })
             
-            # Prepare result data
+            # Bereite Ergebnisdaten vor
+            from utils.metadata_utils import format_metadata_for_storage
             result_data = {
                 "metadata": format_metadata_for_storage(metadata),
                 "chunks": result.get('chunks', []),
@@ -132,7 +124,7 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
                 "totalChunks": result.get('totalChunks', len(chunks))
             }
             
-            # Store result for retrieval
+            # Speichere Ergebnis zur Abholung
             update_document_status(
                 document_id=document_id,
                 status="completed",
@@ -141,20 +133,21 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
                 result=result_data
             )
             
-            # Clean up temporary file
+            # Räume temporäre Datei auf
             try:
                 if os.path.exists(filepath):
                     os.unlink(filepath)
+                    logger.debug(f"Cleaned up file {filepath}")
             except Exception as e:
                 logger.error(f"Error deleting temporary file {filepath}: {e}")
                 
-            # Force garbage collection
+            # Erzwinge Garbage Collection
             gc.collect()
             
         except Exception as e:
             logger.error(f"Error in document analysis: {e}", exc_info=True)
             
-            # Update status to reflect error
+            # Aktualisiere Status, um Fehler widerzuspiegeln
             update_document_status(
                 document_id=document_id,
                 status="error",
@@ -163,14 +156,15 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
                 result={"error": str(e)}
             )
             
-            # Clean up temporary file
+            # Räume temporäre Datei auf
             try:
                 if os.path.exists(filepath):
                     os.unlink(filepath)
+                    logger.debug(f"Cleaned up file {filepath} after error")
             except Exception as cleanup_error:
                 logger.error(f"Error deleting temporary file {filepath}: {cleanup_error}")
             
-            # Force garbage collection
+            # Erzwinge Garbage Collection
             gc.collect()
 
 def get_analysis_results(document_id: str) -> Dict[str, Any]:

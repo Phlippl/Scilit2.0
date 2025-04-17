@@ -133,8 +133,10 @@ def create_app():
     
     # Call it during app creation with app context
     with app.app_context():
+        from api.documents.document_status import initialize_status_service
+        initialize_status_service()
         create_test_user()
-
+        
     # Routes
     @app.route('/')
     def health():
