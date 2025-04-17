@@ -4,7 +4,7 @@ Package für Dokument-API-Endpunkte und zugehörige Funktionen
 """
 
 # Import the blueprint from document_api.py
-from .document_api import documents_bp
+from .routes import documents_bp
 
 # Import other functions
 from .document_processing import (

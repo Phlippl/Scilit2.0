@@ -59,6 +59,8 @@ def get(service_name: str) -> Any:
     if service_name in _factories:
         logger.debug(f"Erstelle Service '{service_name}' mit Factory")
         instance = _factories[service_name]()
+        if instance is None:
+            logger.error(f"Factory für Service '{service_name}' lieferte None!")
         _services[service_name] = instance
         return instance
     
@@ -69,21 +71,30 @@ def initialize_services() -> None:
     """
     Initialisiert Standard-Services mit ihren Factory-Funktionen
     """
-    from services.document_storage_service import DocumentStorageService
-    from services.document_analysis_service import DocumentAnalysisService
+    # Alte Importe entfernen:
+    # from services.document_storage_service import DocumentStorageService
+    # from services.document_analysis_service import DocumentAnalysisService
+    
+    # Neue Importe hinzufügen:
+    from services.documents.processor import DocumentProcessor
     from services.document_db_service import DocumentDBService
-    from Backend.services.status_service import get_status_service
-    from services.authentication import get_auth_manager
+    from services.status_service import get_status_service
+    from services.authentication.auth_manager import AuthManager
     from services.pdf import get_pdf_processor
+    from services.vector_storage import get_vector_storage
     
-    # Registriere Document-Services
-    register_factory('document_storage', lambda: DocumentStorageService())
-    register_factory('document_analysis', lambda: DocumentAnalysisService())
+    # Alte Registrierungen entfernen:
+    # register_factory('document_storage', lambda: DocumentStorageService())
+    # register_factory('document_analysis', lambda: DocumentAnalysisService())
+    
+    # Neue Registrierungen hinzufügen:
+    register_factory('document_processor', lambda: DocumentProcessor())
     register_factory('document_db', lambda: DocumentDBService())
+    register_factory('vector_storage', get_vector_storage)
     
-    # Registriere andere Services als Factory-Funktionen
+    # Behalte bestehende Registrierungen:
     register_factory('status', get_status_service)
-    register_factory('auth', get_auth_manager)
+    register_factory('auth', lambda: AuthManager())
     register_factory('pdf_processor', get_pdf_processor)
     
     logger.info("Standard-Services initialisiert")

@@ -7,7 +7,7 @@ import logging
 import time
 import concurrent.futures
 import sys
-from flask import Flask, jsonify, g, Response, stream_with_context, request
+from flask import Flask, jsonify, g, Response, stream_with_context, request, current_app
 from flask_cors import CORS
 
 # Zentralisierte Konfiguration und Services
@@ -122,10 +122,10 @@ def create_app():
         'NLP_MODEL': initialize_nlp()
     })
 
-    # Zentralisierte Fehlerbehandlung registrieren
+    # Fehlerbehandlung registrieren
     configure_error_handlers(app)
 
-    # Blueprint-Import verzögern, um Zirkelimporte zu vermeiden
+    # Blueprints importieren (verzögert)
     from api.documents.routes import documents_bp
     from api.metadata import metadata_bp
     from api.query import query_bp
@@ -144,16 +144,19 @@ def create_app():
     with app.app_context():
         # Status-Service initialisieren
         initialize_status_service()
-        
-        # Auth-Manager initialisieren und Testbenutzer erstellen
+
+        # Auth-Manager holen und im Kontext speichern
         from services.registry import get
         auth_manager = get('auth')
+        current_app.auth_manager = auth_manager
+
+        # Testbenutzer erstellen
         create_test_user(auth_manager)
 
-    # Services
+    # Hintergrundprüfung für Embeddings starten
     background_executor.submit(check_embeddings)
 
-    # Routes
+    # Health Check
     @app.route('/')
     def health():
         return jsonify({
@@ -163,6 +166,7 @@ def create_app():
             'time': time.strftime('%Y-%m-%d %H:%M:%S')
         })
 
+    # Teststream-Route
     @app.route('/stream-test')
     def stream():
         def generate():
@@ -171,6 +175,7 @@ def create_app():
                 time.sleep(0.5)
         return Response(stream_with_context(generate()), content_type='text/event-stream')
 
+    # Timing & Logging
     @app.before_request
     def before():
         g.start_time = time.time()
@@ -181,23 +186,19 @@ def create_app():
         if hasattr(g, 'start_time'):
             duration = time.time() - g.start_time
             logger.info(f"Anfrage dauerte {duration:.4f}s")
-            
-            # Füge Header für Verarbeitungszeit hinzu
             response.headers['X-Processing-Time'] = f"{duration:.4f}s"
-            
-            # Füge Request-ID in Header für Debugging hinzu
             if hasattr(g, 'request_id'):
                 response.headers['X-Request-ID'] = g.request_id
-        
         return response
 
+    # Shutdown
     @app.teardown_appcontext
     def shutdown(_):
         """Bereinigt Ressourcen beim Herunterfahren"""
         try:
             logger.info("Fahre Executors herunter...")
-            
-            # Executor aus Document-Controller holen und herunterfahren
+
+            # Document-Executor
             try:
                 from api.documents.controller import get_executor
                 executor = get_executor()
@@ -207,7 +208,7 @@ def create_app():
             except Exception as e:
                 logger.warning(f"Executor-Shutdown fehlgeschlagen: {e}")
 
-            # Hintergrund-Executor herunterfahren
+            # Hintergrund-Executor
             if background_executor:
                 background_executor.shutdown(wait=False)
                 logger.info("Hintergrund-Executor heruntergefahren")
@@ -216,6 +217,7 @@ def create_app():
             logger.error(f"Globaler Teardown fehlgeschlagen: {e}")
 
     return app
+
 
 if __name__ == '__main__':
     app = create_app()
