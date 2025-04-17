@@ -15,7 +15,7 @@ import re
 from typing import Dict, List, Any, Optional, Union, Callable
 
 # Import services
-from services.vector_db import search_documents
+from services.vector_storage import search_documents
 from services.citation_service import format_citation
 
 logger = logging.getLogger(__name__)

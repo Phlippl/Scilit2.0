@@ -6,11 +6,7 @@ Package für Dokument-API-Endpunkte und zugehörige Funktionen
 # Import the blueprint from document_api.py
 from .routes import documents_bp
 
-# Import other functions
-from .document_processing import (
-    process_pdf_background, 
-    get_executor
-)
+
 from .document_status import (
     update_document_status,
     cleanup_status,

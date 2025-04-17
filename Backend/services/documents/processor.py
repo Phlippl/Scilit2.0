@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional, Callable, List, Tuple, Union
 
 from flask import current_app
 from services.pdf import get_pdf_processor
-from services.vector_db import store_document_chunks, delete_document as delete_from_vector_db
+from services.vector_storage import store_document_chunks, delete_document as delete_from_vector_db
 from services.registry import get
 from utils.file_utils import write_json, read_json, get_safe_filepath, cleanup_file
 from utils.error_handler import APIError
