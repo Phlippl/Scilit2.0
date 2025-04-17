@@ -11,9 +11,10 @@ from datetime import datetime
 from typing import Dict, Any
 
 # Import services and utilities
-from services.pdf.processor import PDFProcessor
+from services.pdf import get_pdf_processor
+from services.document_analysis_service import DocumentAnalysisService
 from utils.helpers import timeout_handler
-from .document_status import update_document_status, cleanup_status
+from .document_status import update_document_status, cleanup_status, get_document_status
 
 # Import metadata retrieval functions
 try:
@@ -58,89 +59,19 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
                 message="Analyzing document..."
             )
             
-            # Definiere Fortschritts-Callback
-            def update_progress(message: str, progress: int):
-                update_document_status(
-                    document_id=document_id,
-                    status="processing",
-                    progress=progress,
-                    message=message
-                )
+            # Direkte Nutzung des DocumentAnalysisService
+            analysis_service = DocumentAnalysisService()
             
-            # Initialisiere PDF-Processor
-            pdf_processor = PDFProcessor()
-            
-            # Validiere PDF zuerst
-            update_progress("Validating PDF...", 20)
-            is_valid, validation_result = pdf_processor.validate_pdf(filepath)
-            if not is_valid:
-                raise ValueError(f"Invalid PDF file: {validation_result}")
-            
-            # Verarbeite die Datei
-            update_progress("Extracting text and metadata...", 40)
-            result = pdf_processor.process_file(
-                filepath,
-                settings=processing_settings,
-                progress_callback=update_progress
-            )
-            
-            # Metadaten anreichern
-            update_progress("Enriching metadata...", 80)
-            metadata = result['metadata']
-            
-            # Versuche, zusätzliche Metadaten über DOI abzurufen
-            if metadata.get('doi'):
-                try:
-                    from api.metadata import fetch_metadata_from_crossref
-                    crossref_metadata = fetch_metadata_from_crossref(metadata['doi'])
-                    if crossref_metadata:
-                        # Zusammenführen und bestehende Metadaten priorisieren
-                        for key, value in crossref_metadata.items():
-                            if not metadata.get(key) and value:
-                                metadata[key] = value
-                except Exception as e:
-                    logger.warning(f"Error fetching additional metadata: {e}")
-            
-            # Begrenze Chunks in der Antwort
-            MAX_CHUNKS_IN_RESPONSE = 100
-            chunks = result.get('chunks', [])
-            if len(chunks) > MAX_CHUNKS_IN_RESPONSE:
-                logger.info(f"Limiting chunks in response from {len(chunks)} to {MAX_CHUNKS_IN_RESPONSE}")
-                limited_chunks = chunks[:MAX_CHUNKS_IN_RESPONSE]
-                result.update({
-                    'limitedChunks': True,
-                    'totalChunks': len(chunks),
-                    'chunks': limited_chunks
-                })
-            
-            # Bereite Ergebnisdaten vor
-            from utils.metadata_utils import format_metadata_for_storage
-            result_data = {
-                "metadata": format_metadata_for_storage(metadata),
-                "chunks": result.get('chunks', []),
-                "totalPages": metadata.get('totalPages', 0),
-                "processedPages": metadata.get('processedPages', 0),
-                "limitedChunks": result.get('limitedChunks', False),
-                "totalChunks": result.get('totalChunks', len(chunks))
-            }
-            
-            # Speichere Ergebnis zur Abholung
-            update_document_status(
+            # Analysiere das Dokument
+            result = analysis_service.analyze_document(
                 document_id=document_id,
-                status="completed",
-                progress=100,
-                message="Analysis complete",
-                result=result_data
+                filepath=filepath,
+                settings=processing_settings
             )
             
-            # Räume temporäre Datei auf
-            try:
-                if os.path.exists(filepath):
-                    os.unlink(filepath)
-                    logger.debug(f"Cleaned up file {filepath}")
-            except Exception as e:
-                logger.error(f"Error deleting temporary file {filepath}: {e}")
-                
+            # Cleanup Status nach 10 Minuten
+            cleanup_status(document_id, 600)
+            
             # Erzwinge Garbage Collection
             gc.collect()
             
@@ -177,11 +108,7 @@ def get_analysis_results(document_id: str) -> Dict[str, Any]:
     Returns:
         Dict containing analysis results or error information
     """
-    from flask import current_app
-    from .document_status import processing_status, processing_status_lock
-    from .document_status import get_document_status
-
-    # Get status from central function
+    # Direkte Nutzung der get_document_status Funktion
     status_data = get_document_status(document_id)
     
     # Check if status contains results
@@ -191,19 +118,5 @@ def get_analysis_results(document_id: str) -> Dict[str, Any]:
             "result": status_data["result"]
         }
     
-    # If not in memory and no results in status, check for results file
-    results_file = os.path.join(current_app.config['UPLOAD_FOLDER'], 'status', f"{document_id}_results.json")
-    if os.path.exists(results_file):
-        try:
-            with open(results_file, 'r') as f:
-                results_data = json.load(f)
-                
-            return {
-                "status": "completed",
-                "result": results_data
-            }
-        except Exception as e:
-            logger.error(f"Error reading results file: {e}")
-    
-    # If no results file found, return status as is
+    # If no results in status, return status as is
     return status_data

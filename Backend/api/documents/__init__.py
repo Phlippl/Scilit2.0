@@ -1,4 +1,9 @@
-# Import the blueprint from document_api.py, not document_processing.py
+# Backend/api/documents/__init__.py
+"""
+Package für Dokument-API-Endpunkte und zugehörige Funktionen
+"""
+
+# Import the blueprint from document_api.py
 from .document_api import documents_bp
 
 # Import other functions
@@ -7,10 +12,7 @@ from .document_processing import (
     get_executor
 )
 from .document_status import (
-    processing_status, 
     update_document_status,
-    processing_status_lock, 
-    save_status_to_file, 
     cleanup_status,
     get_document_status,
     register_status_callback
@@ -27,12 +29,12 @@ __all__ = [
     'documents_bp',
     'process_pdf_background',
     'get_executor',
-    'processing_status',
-    'processing_status_lock',
-    'save_status_to_file',
     'get_document_status',
+    'update_document_status',
+    'cleanup_status',
     'validate_metadata',
     'format_metadata_for_storage',
     'analyze_document_background',
-    'get_analysis_results'
+    'get_analysis_results',
+    'register_status_callback'
 ]
