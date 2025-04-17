@@ -1,8 +1,6 @@
 # Import the blueprint from document_api.py, not document_processing.py
 from .document_api import documents_bp
 
-# Backend/api/documents/utils/__init__.py
-
 # Import other functions
 from .document_processing import (
     process_pdf_background, 
