@@ -16,7 +16,7 @@ from pathlib import Path
 # Import required services and modules
 from services.pdf_processor import PDFProcessor
 from services.vector_db import store_document_chunks, delete_document as delete_from_vector_db
-from .document_status import update_document_status, cleanup_status
+from .document_status import update_document_status, cleanup_status, processing_status, processing_status_lock, save_status_to_file
 from .document_validation import format_metadata_for_storage, format_authors
 
 # Import metadata retrieval functions
@@ -116,7 +116,9 @@ def process_pdf_background(filepath, document_id, metadata, settings):
                     )
                 except Exception as e:
                     logger.error(f"Error updating progress for document {document_id}: {str(e)}")
-                        
+            
+            # Create PDF processor instance
+            pdf_processor = PDFProcessor()
                       
             try:
                 # Validate PDF first

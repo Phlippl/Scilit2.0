@@ -448,11 +448,14 @@ def save_document():
             )
             logger.debug(f"Initial processing status saved for document {document_id}")
             
+            # Get the current processing status to return to client
+            current_status = get_document_status(document_id)
+            
             logger.info(f"Document {document_id} successfully uploaded and processing started")
             return jsonify({
                 **metadata,
                 "document_id": document_id,
-                "processing_status": initial_status
+                "processing_status": current_status
             })
             
         except Exception as e:
