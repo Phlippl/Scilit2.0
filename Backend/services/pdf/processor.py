@@ -1,6 +1,6 @@
 # Backend/services/pdf/processor.py
 """
-Hauptklasse zur PDF-Verarbeitung mit klaren Verantwortlichkeiten
+Core PDF processing class with clear responsibilities and delegation to specialized components.
 """
 import os
 import logging
@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ProcessingSettings:
-    """Einstellungen für die PDF-Verarbeitung"""
-    max_pages: int = 0
+    """Settings for PDF processing with sensible defaults"""
+    max_pages: int = 0  # 0 means process all pages
     perform_ocr: bool = False
     chunk_size: int = 1000
     chunk_overlap: int = 200
@@ -28,26 +28,23 @@ class ProcessingSettings:
 
 class PDFProcessor:
     """
-    Modulare PDF-Verarbeitungsklasse mit klaren Verantwortlichkeiten
+    Core PDF processing class responsible for coordinating PDF-specific operations.
+    Delegates to specialized components for specific tasks.
     """
     
     def __init__(self):
-        """Initialisiert den PDF-Processor mit seinen Komponenten"""
+        """Initialize the processor and its components"""
         self.text_extractor = TextExtractor()
         self.identifier_extractor = IdentifierExtractor()
         self.text_chunker = TextChunker()
         self.ocr_processor = OCRProcessor()
-        
-        # Cache für Extraktionsergebnisse
-        self._extraction_cache = {}
-        self._max_cache_size = 50
     
     def validate_pdf(self, filepath: str) -> tuple:
         """
-        Validiert ein PDF-Dokument
+        Validate a PDF file
         
         Args:
-            filepath: Pfad zur PDF-Datei
+            filepath: Path to PDF file
             
         Returns:
             tuple: (is_valid, validation_result)
@@ -55,29 +52,24 @@ class PDFProcessor:
         return self.text_extractor.validate_pdf(filepath)
     
     def process_file(self, filepath: str, 
-                    settings: Optional[Dict[str, Any]] = None,
-                    progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+                   settings: Optional[Dict[str, Any]] = None,
+                   progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
         """
-        Verarbeitet eine PDF-Datei vollständig
+        Process a PDF file and extract text, chunks, and metadata
         
         Args:
-            filepath: Pfad zur PDF-Datei
-            settings: Verarbeitungseinstellungen
-            progress_callback: Callback-Funktion für Fortschrittsaktualisierungen
+            filepath: Path to PDF file
+            settings: Processing settings
+            progress_callback: Callback for progress updates
             
         Returns:
-            dict: Verarbeitungsergebnis mit Text, Chunks, Metadaten
+            dict: Processing result with text, chunks, metadata
         """
-        # Standardeinstellungen verwenden wenn keine angegeben
+        # Use standard settings if none provided
         if not settings:
-            settings = {
-                'maxPages': 0,
-                'performOCR': False,
-                'chunkSize': 1000,
-                'chunkOverlap': 200
-            }
+            settings = {}
         
-        # Konvertiere zu ProcessingSettings
+        # Convert to ProcessingSettings
         proc_settings = ProcessingSettings(
             max_pages=int(settings.get('maxPages', 0)),
             perform_ocr=bool(settings.get('performOCR', False)),
@@ -88,10 +80,10 @@ class PDFProcessor:
             warn_file_size_mb=int(settings.get('warnFileSizeMB', 20))
         )
         
-        logger.info(f"Processing file: {filepath}, settings: {settings}")
+        logger.info(f"Processing file: {filepath}")
         
         try:
-            # Prüfe Dateigröße
+            # Check file size
             if isinstance(filepath, str) and os.path.exists(filepath):
                 file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
                 
@@ -104,18 +96,18 @@ class PDFProcessor:
                     if progress_callback:
                         progress_callback(f"Large file ({file_size_mb:.1f} MB). Processing may take longer.", 0)
             
-            # Validiere PDF-Format
+            # Validate PDF format
             valid, message = self.validate_pdf(filepath)
             if not valid:
                 logger.error(f"Invalid PDF: {message}")
                 raise ValueError(f"Invalid PDF: {message}")
             
-            # Erstelle Wrapper für Fortschrittsrückmeldungen
+            # Create progress wrapper for different stages
             def progress_wrapper(stage, callback=progress_callback):
                 if not callback:
                     return lambda msg, pct: None
                 
-                # Teile Fortschritt nach Phasen auf
+                # Divide progress by stages
                 if stage == 'extraction':
                     return lambda msg, pct: callback(msg, pct * 0.6)
                 elif stage == 'chunking':
@@ -125,7 +117,7 @@ class PDFProcessor:
                 else:
                     return callback
             
-            # Text extrahieren
+            # Extract text - delegate to TextExtractor
             extraction_result = self.text_extractor.extract_text(
                 filepath,
                 max_pages=proc_settings.max_pages,
@@ -133,15 +125,15 @@ class PDFProcessor:
                 progress_callback=progress_wrapper('extraction')
             )
             
-            # Fortschrittsupdate
+            # Progress update
             if progress_callback:
                 progress_callback("Extracting metadata", 60)
             
-            # DOI, ISBN extrahieren
+            # Extract metadata - use centralized utility
             metadata = {}
             if proc_settings.extract_metadata:
                 extracted_text = extraction_result['text']
-                # Verwende zentralisierte Funktion
+                # Use centralized identifier extraction
                 identifiers = extract_identifiers(extracted_text)
                 metadata = {
                     'doi': identifiers['doi'],
@@ -151,11 +143,11 @@ class PDFProcessor:
                 }
                 logger.info(f"Extracted identifiers: {identifiers}")
             
-            # Fortschrittsupdate
+            # Progress update
             if progress_callback:
                 progress_callback("Creating chunks with page tracking", 65)
             
-            # Chunks mit Seitenzuordnung erstellen
+            # Create chunks with page mapping - delegate to TextChunker
             chunks_with_pages = self.text_chunker.chunk_text_with_pages(
                 extraction_result['text'],
                 extraction_result['pages'],
@@ -163,15 +155,15 @@ class PDFProcessor:
                 overlap_size=proc_settings.chunk_overlap
             )
             
-            # Validiere Chunks - entferne leere Chunks
+            # Validate chunks - remove empty chunks
             chunks_with_pages = [chunk for chunk in chunks_with_pages if chunk.get('text', '').strip()]
             logger.info(f"Created {len(chunks_with_pages)} non-empty chunks")
             
-            # Fortschrittsupdate
+            # Progress update
             if progress_callback:
                 progress_callback("Processing complete", 100)
             
-            # Erzwinge Garbage Collection
+            # Force garbage collection
             gc.collect()
 
             result = {
@@ -187,27 +179,27 @@ class PDFProcessor:
         except Exception as e:
             logger.error(f"Error in PDF processing: {e}", exc_info=True)
             
-            # Erzwinge Garbage Collection
+            # Force garbage collection
             gc.collect()
             
-            # Werfe mit Kontext
+            # Re-raise with context
             raise ValueError(f"Failed to process PDF: {str(e)}")
     
     def extract_identifiers_only(self, filepath: str, max_pages: int = 10) -> Dict[str, Any]:
         """
-        Extrahiert nur Identifikatoren (DOI, ISBN) aus einem PDF
+        Extract only identifiers (DOI, ISBN) from a PDF
         
         Args:
-            filepath: Pfad zur PDF-Datei
-            max_pages: Maximale Anzahl zu verarbeitender Seiten
+            filepath: Path to PDF file
+            max_pages: Maximum number of pages to process
             
         Returns:
-            dict: Extrahierte Identifikatoren
+            dict: Extracted identifiers
         """
+        # Delegate to IdentifierExtractor
         return self.identifier_extractor.extract_identifiers_from_pdf(filepath, max_pages)
     
     def cleanup_cache(self):
-        """Bereinigt den internen Cache"""
-        self._extraction_cache.clear()
+        """Clean up internal caches"""
         self.text_extractor.cleanup_cache()
         self.identifier_extractor.cleanup_cache()

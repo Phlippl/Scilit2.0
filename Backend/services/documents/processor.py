@@ -1,10 +1,9 @@
 # Backend/services/documents/processor.py
 """
-Konsolidierter Document-Processor-Service, der die Funktionalität 
-von DocumentProcessorService, DocumentStorageService und DocumentAnalysisService vereint.
+High-level document processing service that coordinates the entire document workflow.
+Responsible for orchestrating processing, storage, and status management.
 """
 import os
-import json
 import logging
 import gc
 import uuid
@@ -13,20 +12,19 @@ from typing import Dict, Any, Optional, Callable, List, Tuple, Union
 
 from flask import current_app
 from services.pdf import get_pdf_processor
-from services.vector_storage import store_document_chunks, delete_document as delete_from_vector_db
-from services.registry import get
-from utils.file_utils import write_json, read_json, get_safe_filepath, cleanup_file  # Use file_utils consistently
-from utils.error_handler import APIError
+# Use direct VectorStorage import instead of legacy functions
+from services.vector_storage import get_vector_storage
+from utils.file_utils import write_json, read_json, cleanup_file
 from utils.metadata_utils import format_metadata_for_storage
 from config import config_manager
 
-# Importiere Status-Service für zentralisiertes Status-Management
-from services.status_service import get_status_service
+# Status management
+from services.status_service import update_document_status, cleanup_status
 
 logger = logging.getLogger(__name__)
 
 class DocumentProcessingResult:
-    """Standardisiertes Ergebnisobjekt für Dokumentverarbeitung"""
+    """Standardized result object for document processing"""
     
     def __init__(self, 
                 document_id: str,
@@ -37,16 +35,16 @@ class DocumentProcessingResult:
                 text: str = "",
                 error: Optional[Exception] = None):
         """
-        Initialisiert das Ergebnisobjekt
+        Initialize the result object
         
         Args:
-            document_id: ID des verarbeiteten Dokuments
-            success: Erfolg der Verarbeitung
-            message: Statusnachricht
-            metadata: Metadaten des Dokuments
-            chunks: Extrahierte Textabschnitte
-            text: Gesamter extrahierter Text
-            error: Aufgetretener Fehler (falls vorhanden)
+            document_id: ID of the processed document
+            success: Processing success flag
+            message: Status message
+            metadata: Document metadata
+            chunks: Extracted text chunks
+            text: Complete extracted text
+            error: Exception if processing failed
         """
         self.document_id = document_id
         self.success = success
@@ -58,7 +56,7 @@ class DocumentProcessingResult:
         self.processing_time = datetime.utcnow().isoformat() + 'Z'
     
     def to_dict(self) -> Dict[str, Any]:
-        """Konvertiert das Ergebnis in ein Dictionary"""
+        """Convert the result to a dictionary"""
         result = {
             "document_id": self.document_id,
             "success": self.success,
@@ -69,7 +67,7 @@ class DocumentProcessingResult:
             "processing_time": self.processing_time
         }
         
-        # Für API-Antworten nur begrenzte Anzahl an Chunks zurückgeben
+        # For API responses only return limited number of chunks
         if self.chunks:
             MAX_CHUNKS_IN_RESPONSE = 100
             if len(self.chunks) > MAX_CHUNKS_IN_RESPONSE:
@@ -79,7 +77,7 @@ class DocumentProcessingResult:
             else:
                 result["chunks"] = self.chunks
         
-        # Bei Fehler Fehlermeldung hinzufügen
+        # Add error message if present
         if self.error:
             result["error"] = str(self.error)
         
@@ -87,13 +85,16 @@ class DocumentProcessingResult:
 
 class DocumentProcessor:
     """
-    Konsolidierter Document-Processor, der die Funktionalität der separaten Services vereint
-    und eine einheitliche API für die Dokumentverarbeitung bietet.
+    High-level document processor that coordinates the entire document workflow.
+    Delegates PDF-specific operations to PDFProcessor.
     """
     
     def __init__(self):
-        """Initialisiert den Document-Processor"""
+        """Initialize the document processor"""
+        # Get the PDF processor via the service registry
         self.pdf_processor = get_pdf_processor()
+        # Get the vector storage
+        self.vector_storage = get_vector_storage()
     
     def process(self, 
                filepath: str, 
@@ -103,185 +104,171 @@ class DocumentProcessor:
                store: bool = True, 
                cleanup_file_after: bool = False) -> DocumentProcessingResult:
         """
-        Verarbeitet ein Dokument mit optionaler Speicherung
+        Process a document with optional storage
         
         Args:
-            filepath: Pfad zur Dokumentdatei
-            document_id: Dokument-ID
-            metadata: Optionale Metadaten
-            settings: Verarbeitungseinstellungen
-            store: Ob das Dokument in der Vektordatenbank gespeichert werden soll
-            cleanup_file_after: Ob die Datei nach der Verarbeitung gelöscht werden soll
+            filepath: Path to document file
+            document_id: Document ID
+            metadata: Optional metadata
+            settings: Processing settings
+            store: Whether to store in vector database
+            cleanup_file_after: Whether to delete file after processing
             
         Returns:
-            DocumentProcessingResult: Ergebnis der Verarbeitung
+            DocumentProcessingResult: Processing result
         """
-        # Aktiviere Garbage Collection
+        # Enable garbage collection
         gc.enable()
         
-        # Standardwerte für Metadaten und Einstellungen
+        # Default values
         metadata = metadata or {}
         settings = settings or {}
         
-        # Standard-Verarbeitungseinstellungen
-        processing_settings = {
-            'maxPages': int(settings.get('maxPages', 0)),
-            'performOCR': bool(settings.get('performOCR', False)),
-            'chunkSize': int(settings.get('chunkSize', 1000)),
-            'chunkOverlap': int(settings.get('chunkOverlap', 200)),
-            'extractMetadata': bool(settings.get('extractMetadata', True))
-        }
-        
         try:
-            # Status initialisieren
-            get_status_service().update_status(
-                status_id=document_id,
+            # Initialize status
+            update_document_status(
+                document_id=document_id,
                 status="processing",
                 progress=0,
-                message="Starte Dokumentverarbeitung..."
+                message="Starting document processing..."
             )
             
-            # Dokument validieren
-            get_status_service().update_status(
-                status_id=document_id,
+            # Validate document
+            update_document_status(
+                document_id=document_id,
                 status="processing",
                 progress=10,
-                message="Validiere Dokument..."
+                message="Validating document..."
             )
             
             valid, validation_result = self._validate_document(filepath)
             if not valid:
-                raise ValueError(f"Dokumentvalidierung fehlgeschlagen: {validation_result}")
+                raise ValueError(f"Document validation failed: {validation_result}")
             
-            # PDF verarbeiten
-            get_status_service().update_status(
-                status_id=document_id,
+            # Process PDF - delegate to PDFProcessor
+            update_document_status(
+                document_id=document_id,
                 status="processing",
                 progress=30,
-                message="Extrahiere Text und Metadaten..."
+                message="Extracting text and metadata..."
             )
             
-            # Verarbeite PDF mit dem PDF-Processor
+            # Process PDF using the dedicated PDF processor
             pdf_result = self.pdf_processor.process_file(
                 filepath,
-                processing_settings,
-                progress_callback=lambda msg, pct: get_status_service().update_status(
-                    status_id=document_id,
+                settings,
+                progress_callback=lambda msg, pct: update_document_status(
+                    document_id=document_id,
                     status="processing",
                     progress=30 + int(pct * 0.5),  # 30% - 80%
                     message=msg
                 )
             )
             
-            # Metadaten aktualisieren, falls in der Datei gefunden
+            # Update metadata with extracted information
             extracted_metadata = pdf_result.get('metadata', {})
             if extracted_metadata:
                 for key in ['doi', 'isbn', 'totalPages', 'processedPages']:
                     if key in extracted_metadata and extracted_metadata[key]:
                         metadata[key] = extracted_metadata[key]
             
-            # Status aktualisieren
+            # Update status for vector storage
             if store:
-                get_status_service().update_status(
-                    status_id=document_id,
+                update_document_status(
+                    document_id=document_id,
                     status="processing",
                     progress=85,
-                    message="Speichere Chunks in Vektordatenbank..."
+                    message="Storing chunks in vector database..."
                 )
             
-            # Speichere Metadaten und Chunks
+            # Prepare result object
             chunks = pdf_result.get('chunks', [])
             result = DocumentProcessingResult(
                 document_id=document_id,
                 success=True,
-                message="Dokument erfolgreich verarbeitet",
+                message="Document successfully processed",
                 metadata=metadata,
                 chunks=chunks,
                 text=pdf_result.get('text', '')
             )
             
-            # In Vektordatenbank speichern, falls gewünscht
+            # Store in vector database if requested
             if store and chunks and len(chunks) > 0:
-                # Angemessene Chunk-Begrenzung
+                # Apply reasonable chunk limit
                 max_chunks = min(len(chunks), 500)
                 limited_chunks = chunks[:max_chunks]
                 
-                # Metadaten formatieren
+                # Format metadata for storage
                 user_id = metadata.get('user_id', 'default_user')
                 formatted_metadata = format_metadata_for_storage(metadata)
                 
-                # Versuche, in Vektordatenbank zu speichern
+                # Store in vector database
                 try:
-                    store_result = store_document_chunks(
+                    self.vector_storage.store_document_chunks(
                         document_id=document_id,
                         chunks=limited_chunks,
                         metadata=formatted_metadata
                     )
                     
-                    if store_result:
-                        logger.info(f"Dokument {document_id} mit {len(limited_chunks)} Chunks gespeichert")
-                    else:
-                        logger.warning(f"Fehler beim Speichern von Dokument {document_id} in Vektordatenbank")
-                        result.message = "Dokument verarbeitet, aber Chunks konnten nicht gespeichert werden"
-                        result.success = False
+                    logger.info(f"Document {document_id} with {len(limited_chunks)} chunks stored")
                     
-                    # Metadata aktualisieren
-                    result.metadata['processed'] = store_result
+                    # Update metadata
+                    result.metadata['processed'] = True
                     result.metadata['num_chunks'] = len(limited_chunks)
-                    result.metadata['chunk_size'] = processing_settings['chunkSize']
-                    result.metadata['chunk_overlap'] = processing_settings['chunkOverlap']
+                    result.metadata['chunk_size'] = settings.get('chunkSize', 1000)
+                    result.metadata['chunk_overlap'] = settings.get('chunkOverlap', 200)
                     
                 except Exception as e:
-                    logger.error(f"Fehler beim Speichern in Vektordatenbank: {e}")
-                    result.message = f"Dokument verarbeitet, aber Fehler beim Speichern: {str(e)}"
+                    logger.error(f"Error storing in vector database: {e}")
+                    result.message = f"Document processed, but error storing: {str(e)}"
                     result.success = False
             
-            # Speichere die Metadaten als JSON-Datei
+            # Save metadata as JSON file
             if store:
                 metadata_path = f"{filepath}.json"
-                # Abschluss der Verarbeitung in Metadaten
+                # Add processing completion to metadata
                 metadata['processingComplete'] = result.success
                 metadata['processedDate'] = result.processing_time
                 write_json(metadata_path, metadata)
             
-            # Bereinige Datei, falls gewünscht
+            # Clean up file if requested
             if cleanup_file_after and os.path.exists(filepath):
                 try:
-                    cleanup_file(filepath)  # Use file_utils.cleanup_file
-                    logger.debug(f"Datei {filepath} nach Verarbeitung gelöscht")
+                    cleanup_file(filepath)
+                    logger.debug(f"File {filepath} deleted after processing")
                 except Exception as e:
-                    logger.warning(f"Fehler beim Löschen der Datei {filepath}: {e}")
+                    logger.warning(f"Error deleting file {filepath}: {e}")
             
-            # Aktualisiere Status
+            # Update status
             status = "completed" if result.success else "completed_with_warnings"
-            get_status_service().update_status(
-                status_id=document_id,
+            update_document_status(
+                document_id=document_id,
                 status=status,
                 progress=100,
                 message=result.message,
                 result=result.to_dict()
             )
             
-            # Cleanup Status nach 10 Minuten
-            get_status_service().cleanup_status(document_id, 600)
+            # Clean up status after 10 minutes
+            cleanup_status(document_id, 600)
             
-            # Garbage Collection
+            # Force garbage collection
             gc.collect()
             
             return result
             
         except Exception as e:
-            logger.error(f"Fehler bei der Dokumentverarbeitung für {document_id}: {e}", exc_info=True)
+            logger.error(f"Error processing document {document_id}: {e}", exc_info=True)
             
-            # Aktualisiere Status
-            get_status_service().update_status(
-                status_id=document_id,
+            # Update status
+            update_document_status(
+                document_id=document_id,
                 status="error",
                 progress=0,
-                message=f"Fehler bei der Dokumentverarbeitung: {str(e)}"
+                message=f"Error processing document: {str(e)}"
             )
             
-            # Speichere Fehler in Metadaten, falls vorhanden
+            # Save error in metadata if storing
             if store:
                 try:
                     metadata_path = f"{filepath}.json"
@@ -299,24 +286,24 @@ class DocumentProcessor:
                     
                     write_json(metadata_path, metadata)
                 except Exception as metadata_err:
-                    logger.error(f"Fehler beim Speichern der Fehlermetadaten für {document_id}: {metadata_err}")
+                    logger.error(f"Error saving error metadata for {document_id}: {metadata_err}")
             
-            # Bereinige Datei bei Fehler, falls gewünscht
+            # Clean up file on error if requested
             if cleanup_file_after and os.path.exists(filepath):
                 try:
-                    cleanup_file(filepath)  # Use file_utils.cleanup_file
-                    logger.debug(f"Datei {filepath} nach Fehler gelöscht")
+                    cleanup_file(filepath)
+                    logger.debug(f"File {filepath} deleted after error")
                 except Exception as cleanup_err:
-                    logger.warning(f"Fehler beim Löschen der Datei {filepath}: {cleanup_err}")
+                    logger.warning(f"Error deleting file {filepath}: {cleanup_err}")
             
-            # Garbage Collection
+            # Force garbage collection
             gc.collect()
             
-            # Fehler zurückgeben
+            # Return error result
             return DocumentProcessingResult(
                 document_id=document_id,
                 success=False,
-                message=f"Fehler bei der Dokumentverarbeitung: {str(e)}",
+                message=f"Error processing document: {str(e)}",
                 metadata=metadata,
                 error=e
             )
@@ -327,18 +314,18 @@ class DocumentProcessor:
                settings: Optional[Dict[str, Any]] = None,
                cleanup_file_after: bool = True) -> DocumentProcessingResult:
         """
-        Analysiert ein Dokument ohne dauerhafte Speicherung
+        Analyze a document without permanent storage
         
         Args:
-            filepath: Pfad zur Dokumentdatei
-            document_id: Dokument-ID
-            settings: Verarbeitungseinstellungen
-            cleanup_file_after: Ob die Datei nach der Analyse gelöscht werden soll
+            filepath: Path to document file
+            document_id: Document ID
+            settings: Processing settings
+            cleanup_file_after: Whether to delete file after analysis
             
         Returns:
-            DocumentProcessingResult: Ergebnis der Analyse
+            DocumentProcessingResult: Analysis result
         """
-        # Verarbeite Dokument ohne Speicherung
+        # Process document without storage
         return self.process(
             filepath=filepath,
             document_id=document_id,
@@ -350,37 +337,37 @@ class DocumentProcessor:
     
     def _validate_document(self, filepath: str) -> Tuple[bool, str]:
         """
-        Validiert das Dokument und gibt Erfolg und Ergebnis zurück
+        Validate document and return success and result
         
         Args:
-            filepath: Pfad zur Dokumentdatei
+            filepath: Path to document file
             
         Returns:
             tuple: (is_valid, validation_result)
         """
         try:
+            # Delegate validation to PDF processor
             is_valid, validation_result = self.pdf_processor.validate_pdf(filepath)
             if not is_valid:
-                raise ValueError(f"Ungültige PDF-Datei: {validation_result}")
+                raise ValueError(f"Invalid PDF file: {validation_result}")
             return True, validation_result
         except Exception as e:
-            logger.error(f"Fehler bei der Dokumentvalidierung: {str(e)}")
+            logger.error(f"Error validating document: {str(e)}")
             return False, str(e)
 
-# Starten der Dokumentverarbeitung im Hintergrund
+# Function for background processing
 def process_document_background(filepath: str, document_id: str, metadata: Dict[str, Any], settings: Dict[str, Any]):
     """
-    Verarbeitet ein Dokument im Hintergrund
+    Process document in background
     
     Args:
-        filepath: Pfad zur Dokumentdatei
-        document_id: Dokument-ID
-        metadata: Dokument-Metadaten
-        settings: Verarbeitungseinstellungen
+        filepath: Path to document file
+        document_id: Document ID
+        metadata: Document metadata
+        settings: Processing settings
     """
-    # Ruft den Document-Processor über die Service-Registry auf
     try:
-        # Holt app-Kontext (wenn in Flask-Anwendung)
+        # Get app context (if in Flask application)
         try:
             from flask import current_app
             app = current_app._get_current_object()
@@ -395,7 +382,7 @@ def process_document_background(filepath: str, document_id: str, metadata: Dict[
                     cleanup_file_after=False
                 )
         except (ImportError, RuntimeError):
-            # Bei Ausführung außerhalb von Flask
+            # If running outside Flask
             document_processor = DocumentProcessor()
             document_processor.process(
                 filepath=filepath,
@@ -406,12 +393,12 @@ def process_document_background(filepath: str, document_id: str, metadata: Dict[
                 cleanup_file_after=False
             )
     except Exception as e:
-        logger.error(f"Fehler bei der Hintergrundverarbeitung für {document_id}: {e}", exc_info=True)
+        logger.error(f"Error in background processing for {document_id}: {e}", exc_info=True)
         
-        # Fehler in Status melden
-        get_status_service().update_status(
-            status_id=document_id,
+        # Report error in status
+        update_document_status(
+            document_id=document_id,
             status="error",
             progress=0,
-            message=f"Fehler bei der Dokumentverarbeitung: {str(e)}"
+            message=f"Error processing document: {str(e)}"
         )

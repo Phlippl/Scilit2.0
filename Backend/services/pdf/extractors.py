@@ -365,45 +365,46 @@ class TextExtractor:
 
 class IdentifierExtractor:
     """
-    Komponente zur Extraktion von Identifikatoren (DOI, ISBN) aus PDFs
+    Component to extract identifiers (DOI, ISBN) from PDFs.
+    Delegates actual extraction to centralized utils/identifier_utils.py.
     """
     
     def __init__(self, cache_size: int = 50):
         """
-        Initialisiert den Identifikator-Extraktor
+        Initialize the identifier extractor
         
         Args:
-            cache_size: Maximale Größe des Caches
+            cache_size: Maximum size of cache
         """
         self._identifier_cache = {}
         self.cache_size = cache_size
     
     def extract_identifiers(self, text: str, cache_key: Optional[str] = None) -> Dict[str, Any]:
         """
-        Extrahiert DOI und ISBN aus Text mit Caching
+        Extract DOI and ISBN from text with caching
         
         Args:
-            text: Text zum Durchsuchen
-            cache_key: Optionaler Schlüssel für Caching
+            text: Text to search
+            cache_key: Optional key for caching
                 
         Returns:
-            dict: Gefundene Identifikatoren
+            dict: Found identifiers
         """
-        # Prüfe Cache zuerst
+        # Check cache first
         if cache_key and cache_key in self._identifier_cache:
             logger.debug(f"Using cached identifiers for key: {cache_key}")
             return self._identifier_cache[cache_key]
         
         logger.info("Extracting identifiers from text")
         
-        # Verwende zentralisierte Funktion
+        # Use centralized function from identifier_utils
         result = utils_extract_identifiers(text)
         
-        # Cache Ergebnis wenn Schlüssel angegeben
+        # Cache result if key provided
         if cache_key:
-            # Begrenze Cache-Größe
+            # Limit cache size
             if len(self._identifier_cache) >= self.cache_size:
-                # Entferne ältesten Eintrag
+                # Remove oldest entry
                 oldest_key = next(iter(self._identifier_cache))
                 self._identifier_cache.pop(oldest_key)
                     
@@ -413,28 +414,28 @@ class IdentifierExtractor:
     
     def extract_identifiers_from_pdf(self, filepath: str, max_pages: int = 10) -> Dict[str, Any]:
         """
-        Extrahiert nur DOI und ISBN aus den ersten Seiten eines PDFs
+        Extract only DOI and ISBN from the first pages of a PDF
         
         Args:
-            filepath: Pfad zur PDF-Datei
-            max_pages: Maximale Anzahl zu verarbeitender Seiten
+            filepath: Path to PDF file
+            max_pages: Maximum number of pages to process
             
         Returns:
-            dict: Dictionary mit gefundenen Identifikatoren
+            dict: Dictionary with found identifiers
         """
         doc = None
         logger.info(f"Extracting identifiers only from: {filepath}, max_pages={max_pages}")
         try:
-            # PDF öffnen
+            # Open PDF
             doc = fitz.open(filepath)
             file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
             logger.info(f"Opened PDF with {len(doc)} pages, size: {file_size_mb:.2f} MB")
             
-            # Seitenzahl begrenzen
+            # Limit page count
             pages_to_process = min(max_pages, len(doc))
             logger.debug(f"Will process {pages_to_process} pages for identifier extraction")
             
-            # Text aus ersten Seiten extrahieren
+            # Extract text from first pages
             text = ""
             for i in range(pages_to_process):
                 page = doc[i]
@@ -442,7 +443,7 @@ class IdentifierExtractor:
                 logger.debug(f"Extracted {len(page_text)} chars from page {i+1}")
                 text += page_text + "\n"
             
-            # Identifikatoren extrahieren mit zentraler Funktion
+            # Extract identifiers using centralized function
             identifiers = utils_extract_identifiers(text)
             doi = identifiers['doi']
             isbn = identifiers['isbn']
@@ -459,14 +460,14 @@ class IdentifierExtractor:
                         back_pages_text += page.get_text() + "\n"
                         logger.debug(f"Extracted {len(page.get_text())} chars from back page {i+1}")
                 
-                # Try to find identifiers in back matter
+                # Try to find identifiers in back matter using centralized function
                 back_identifiers = utils_extract_identifiers(back_pages_text)
                 if not doi:
                     doi = back_identifiers['doi']
                 if not isbn:
                     isbn = back_identifiers['isbn']
             
-            # Wichtig: Dokument am Ende schließen
+            # Important: Close document at the end
             total_pages = len(doc)
             doc.close()
             doc = None
@@ -484,7 +485,7 @@ class IdentifierExtractor:
             logger.error(f"Error extracting identifiers: {e}", exc_info=True)
             return {'error': str(e)}
         finally:
-            # Sicherstellen, dass Dokument geschlossen wird
+            # Ensure document is closed
             if doc:
                 try:
                     doc.close()
@@ -493,5 +494,5 @@ class IdentifierExtractor:
                     logger.error(f"Error closing document in finally block: {e}")
     
     def cleanup_cache(self):
-        """Bereinigt den internen Cache"""
+        """Clean up internal cache"""
         self._identifier_cache.clear()
