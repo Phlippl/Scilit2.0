@@ -12,7 +12,7 @@ from typing import Dict, Any
 
 # Import services and utilities
 from services.pdf import get_pdf_processor
-from services.document_analysis_service import DocumentAnalysisService
+from services.documents.processor import DocumentProcessor
 from utils.helpers import timeout_handler
 from .document_status import update_document_status, cleanup_status, get_document_status
 
@@ -60,10 +60,10 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
             )
             
             # Direkte Nutzung des DocumentAnalysisService
-            analysis_service = DocumentAnalysisService()
+            document_processor = DocumentProcessor()
             
             # Analysiere das Dokument
-            result = analysis_service.analyze_document(
+            result = document_processor.analyze_document(
                 document_id=document_id,
                 filepath=filepath,
                 settings=processing_settings
