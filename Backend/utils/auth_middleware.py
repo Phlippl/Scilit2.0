@@ -112,6 +112,32 @@ def verify_token(token: str) -> Dict[str, Any]:
     
     return jwt.decode(token, secret_key, algorithms=['HS256'])
 
+def verify_token_with_options(token: str, options: Dict[str, Any] = None) -> Dict[str, Any]:
+    """
+    Verifiziert ein JWT-Token mit optionalen Optionen
+    
+    Args:
+        token: JWT-Token
+        options: Zusätzliche Optionen für jwt.decode
+        
+    Returns:
+        dict: Token-Payload
+        
+    Raises:
+        jwt.ExpiredSignatureError: Wenn Token abgelaufen ist
+        jwt.InvalidTokenError: Wenn Token ungültig ist
+        APIError: Bei Konfigurationsfehlern
+    """
+    secret_key = config_manager.get('SECRET_KEY')
+    if not secret_key:
+        raise APIError("Serverkonfigurationsfehler", 500)
+    
+    decode_options = {}
+    if options:
+        decode_options.update(options)
+    
+    return jwt.decode(token, secret_key, algorithms=['HS256'], options=decode_options)
+
 def requires_auth(f: Callable) -> Callable:
     """
     Dekorator für Endpunkte, die Authentifizierung erfordern

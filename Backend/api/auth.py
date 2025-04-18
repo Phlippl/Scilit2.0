@@ -4,6 +4,13 @@ import logging
 import jwt
 import datetime
 from services.authentication import get_auth_manager
+from utils.auth_middleware import (
+    get_token_from_header,
+    verify_token,
+    verify_token_with_options,
+    get_current_user as middleware_get_current_user
+)
+from config import config_manager
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +44,7 @@ def register():
         return jsonify({"error": error}), 400
     
     # Create JWT token
-    secret_key = current_app.config['SECRET_KEY']
+    secret_key = config_manager.get('SECRET_KEY')
     token = jwt.encode({
         'sub': user.id,
         'email': user.email,
@@ -79,7 +86,7 @@ def login():
         return jsonify({"error": error}), 401
     
     # Create JWT token
-    secret_key = current_app.config['SECRET_KEY']
+    secret_key = config_manager.get('SECRET_KEY')
     token = jwt.encode({
         'sub': user.id,
         'email': user.email,
@@ -99,20 +106,15 @@ def login():
 @auth_bp.route('/refresh', methods=['POST'])
 def refresh_token():
     """Refresh token without complete re-authentication"""
-    # Check if token exists
-    auth_header = request.headers.get('Authorization')
+    # Get token using middleware function
+    token = get_token_from_header()
     
-    if not auth_header or not auth_header.startswith('Bearer '):
+    if not token:
         return jsonify({"error": "Token required"}), 401
     
-    token = auth_header.split(' ')[1]
-    
     try:
-        # Decode token, even if expired
-        secret_key = current_app.config['SECRET_KEY']
-        
-        # Important: We ignore the expiration date to identify the user
-        payload = jwt.decode(token, secret_key, algorithms=['HS256'], options={"verify_exp": False})
+        # Use middleware function to verify token without checking expiration
+        payload = verify_token_with_options(token, {"verify_exp": False})
         
         # Get auth manager
         auth_manager = get_auth_manager()
@@ -124,6 +126,7 @@ def refresh_token():
             return jsonify({"error": "User not found"}), 404
         
         # Create new token
+        secret_key = config_manager.get('SECRET_KEY')
         new_token = jwt.encode({
             'sub': user.id,
             'email': user.email,
@@ -147,21 +150,15 @@ def refresh_token():
 @auth_bp.route('/me', methods=['GET'])
 def get_current_user():
     """Get current authenticated user"""
-    auth_header = request.headers.get('Authorization')
+    # Get token using middleware function
+    token = get_token_from_header()
     
-    if not auth_header or not auth_header.startswith('Bearer '):
+    if not token:
         return jsonify({"error": "Authentication required"}), 401
     
-    token = auth_header.split(' ')[1]
-    
-    # More robust token validation
-    if not token or token.count('.') != 2:
-        return jsonify({"error": "Invalid token format"}), 401
-    
     try:
-        # Decode token
-        secret_key = current_app.config['SECRET_KEY']
-        payload = jwt.decode(token, secret_key, algorithms=['HS256'])
+        # Use middleware function to verify token
+        payload = verify_token(token)
         
         # Get auth manager
         auth_manager = get_auth_manager()
@@ -182,15 +179,11 @@ def get_current_user():
 @auth_bp.route('/logout', methods=['POST'])
 def logout():
     """Log out user (client deletes token)"""
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        return jsonify({"error": "Authentication required"}), 401
-
-    token = auth_header.split(' ')[1]
+    # Use middleware function to get token
+    token = get_token_from_header()
     
-    # More robust token validation
-    if not token or token.count('.') != 2:
-        return jsonify({"error": "Invalid token format"}), 401
+    if not token:
+        return jsonify({"error": "Authentication required"}), 401
 
     # In this simple approach, no server-side action is performed.
     # The client should delete the token after successful logout.
