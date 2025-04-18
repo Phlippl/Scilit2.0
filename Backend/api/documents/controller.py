@@ -21,11 +21,7 @@ from utils.file_utils import (
     read_json, write_json, find_files, cleanup_file
 )
 from utils.metadata_utils import validate_metadata, format_metadata_for_storage
-from services.status_service import (
-    update_document_status, cleanup_status, get_document_status,
-    register_status_callback
-)
-from services.registry import get
+from services.status_service import get_status_service
 
 # Importiere Services
 from services.documents.processor import DocumentProcessor, process_document_background
@@ -119,7 +115,7 @@ def get_document(document_id: str) -> Tuple[Dict[str, Any], int]:
             raise APIError("Ungültige Dokument-Metadaten", 500)
         
         # Verarbeitungsstatus hinzufügen
-        metadata['processing_status'] = get_document_status(document_id)
+        metadata['processing_status'] = get_status_service().get_status(document_id)
             
         return metadata, 200
         
@@ -211,8 +207,8 @@ def save_document(file, metadata: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
             metadata['processingComplete'] = False
             
             # Initialen Status speichern
-            update_document_status(
-                document_id=document_id,
+            get_status_service().update_status(
+                status_id=document_id,
                 status="processing",
                 progress=0,
                 message="Dokument-Upload abgeschlossen. Verarbeitung gestartet..."
@@ -233,7 +229,7 @@ def save_document(file, metadata: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
             )
             
             # Aktuellen Verarbeitungsstatus holen
-            current_status = get_document_status(document_id)
+            current_status = get_status_service().get_status(document_id)
             
             logger.info(f"Dokument {document_id} erfolgreich hochgeladen und Verarbeitung gestartet")
             return {
@@ -297,14 +293,14 @@ def delete_document(document_id: str) -> Tuple[Dict[str, Any], int]:
         
         # Aus Vektordatenbank löschen
         try:
-            from services.vector_db import delete_document as delete_from_vector_db
-            delete_from_vector_db(document_id, user_id)
+            from services.vector_storage import get_vector_storage
+            get_vector_storage().delete_document(document_id, user_id)
             logger.info(f"Dokument {document_id} aus Vektordatenbank gelöscht")
         except Exception as e:
             logger.error(f"Fehler beim Löschen aus Vektordatenbank: {e}")
         
         # Verarbeitungsstatus bereinigen
-        cleanup_status(document_id, 0)  # Sofortige Bereinigung
+        get_status_service().cleanup_status(document_id, 0)  # Sofortige Bereinigung
         logger.debug(f"Verarbeitungsstatus für Dokument {document_id} bereinigt")
         
         logger.info(f"Dokument {document_id} erfolgreich gelöscht")
@@ -386,8 +382,8 @@ def update_document(document_id: str, updated_metadata: Dict[str, Any]) -> Tuple
                     }
                     
                     # Status aktualisieren
-                    update_document_status(
-                        document_id=document_id,
+                    get_status_service().update_status(
+                        status_id=document_id,
                         status="processing",
                         progress=0,
                         message="Aktualisiere Dokumentmetadaten..."
@@ -583,8 +579,8 @@ def analyze_document(file, settings: Dict[str, Any]) -> Tuple[Dict[str, Any], in
         logger.info(f"Temporäre Datei für Analyse gespeichert: {temp_filepath}")
         
         # Job-Eintrag für asynchrone Verarbeitung erstellen
-        update_document_status(
-            document_id=document_id,
+        get_status_service().update_status(
+            status_id=document_id,
             status="processing",
             progress=0,
             message="Starte Analyse..."
@@ -627,7 +623,7 @@ def get_analysis_status(document_id: str) -> Tuple[Dict[str, Any], int]:
     """
     try:
         # Status abrufen
-        status_data = get_document_status(document_id)
+        status_data = get_status_service().get_status(document_id)
         
         # Wenn abgeschlossen, Ergebnisse zurückgeben
         if status_data.get("status") == "completed" and "result" in status_data:
@@ -659,8 +655,8 @@ def cancel_processing(document_id: str) -> Tuple[Dict[str, Any], int]:
         logger.info(f"Breche Verarbeitung für Dokument {document_id} durch Benutzer {user_id} ab")
         
         # Status auf abgebrochen setzen
-        update_document_status(
-            document_id=document_id,
+        get_status_service().update_status(
+            status_id=document_id,
             status="canceled",
             progress=0,
             message="Verarbeitung durch Benutzer abgebrochen"

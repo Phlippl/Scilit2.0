@@ -3,18 +3,15 @@
 Module for document analysis without full processing
 """
 import os
-import json
 import logging
 import gc
 import time
-from datetime import datetime
 from typing import Dict, Any
 
 # Import services and utilities
-from services.pdf import get_pdf_processor
 from services.documents.processor import DocumentProcessor
 from utils.helpers import timeout_handler
-from .document_status import update_document_status, cleanup_status, get_document_status
+from services.status_service import get_status_service
 
 # Import metadata retrieval functions
 try:
@@ -52,42 +49,55 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
             }
             
             # Aktualisiere Status
-            update_document_status(
-                document_id=document_id,
+            get_status_service().update_status(
+                status_id=document_id,
                 status="processing",
                 progress=10,
                 message="Analyzing document..."
             )
             
-            # Direkte Nutzung des DocumentAnalysisService
+            # Use the consolidated DocumentProcessor directly
             document_processor = DocumentProcessor()
             
-            # Analysiere das Dokument
-            result = document_processor.analyze_document(
-                document_id=document_id,
+            # Analyze the document
+            result = document_processor.analyze(
                 filepath=filepath,
-                settings=processing_settings
+                document_id=document_id,
+                settings=processing_settings,
+                cleanup_file_after=True
             )
             
-            # Cleanup Status nach 10 Minuten
-            cleanup_status(document_id, 600)
+            # Convert result to dictionary
+            result_dict = result.to_dict()
             
-            # Erzwinge Garbage Collection
+            # Update status with results
+            get_status_service().update_status(
+                status_id=document_id,
+                status="completed",
+                progress=100,
+                message="Analysis complete",
+                result=result_dict
+            )
+            
+            # Cleanup Status after 10 minutes
+            get_status_service().cleanup_status(document_id, 600)
+            
+            # Force garbage collection
             gc.collect()
             
         except Exception as e:
             logger.error(f"Error in document analysis: {e}", exc_info=True)
             
-            # Aktualisiere Status, um Fehler widerzuspiegeln
-            update_document_status(
-                document_id=document_id,
+            # Update status to reflect error
+            get_status_service().update_status(
+                status_id=document_id,
                 status="error",
                 progress=0,
                 message=f"Error analyzing document: {str(e)}",
                 result={"error": str(e)}
             )
             
-            # Räume temporäre Datei auf
+            # Clean up temporary file
             try:
                 if os.path.exists(filepath):
                     os.unlink(filepath)
@@ -95,7 +105,7 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
             except Exception as cleanup_error:
                 logger.error(f"Error deleting temporary file {filepath}: {cleanup_error}")
             
-            # Erzwinge Garbage Collection
+            # Force garbage collection
             gc.collect()
 
 def get_analysis_results(document_id: str) -> Dict[str, Any]:
@@ -108,8 +118,8 @@ def get_analysis_results(document_id: str) -> Dict[str, Any]:
     Returns:
         Dict containing analysis results or error information
     """
-    # Direkte Nutzung der get_document_status Funktion
-    status_data = get_document_status(document_id)
+    # Direct use of the get_status_service function
+    status_data = get_status_service().get_status(document_id)
     
     # Check if status contains results
     if status_data.get("status") == "completed" and "result" in status_data:

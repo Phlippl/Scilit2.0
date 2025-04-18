@@ -3,14 +3,13 @@
 Package für Dokument-API-Endpunkte und zugehörige Funktionen
 """
 
-# Import the blueprint from document_api.py
+# Import the blueprint from routes.py
 from .routes import documents_bp
 
-from .document_status import (
-    update_document_status,
-    cleanup_status,
-    get_document_status,
-    register_status_callback
+# Import functions directly from status_service
+from services.status_service import (
+    get_status_service,
+    initialize_status_service
 )
 
 from utils.metadata_utils import (
@@ -25,14 +24,10 @@ from .document_analysis import (
 
 __all__ = [
     'documents_bp',
-    'process_pdf_background',
-    'get_executor',
-    'get_document_status',
-    'update_document_status',
-    'cleanup_status',
+    'get_status_service',
+    'initialize_status_service',
     'validate_metadata',
     'format_metadata_for_storage',
     'analyze_document_background',
-    'get_analysis_results',
-    'register_status_callback'
+    'get_analysis_results'
 ]

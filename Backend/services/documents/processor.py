@@ -21,7 +21,7 @@ from utils.metadata_utils import format_metadata_for_storage
 from config import config_manager
 
 # Importiere Status-Service für zentralisiertes Status-Management
-from services.status_service import update_document_status, cleanup_status
+from services.status_service import get_status_service
 
 logger = logging.getLogger(__name__)
 
@@ -134,16 +134,16 @@ class DocumentProcessor:
         
         try:
             # Status initialisieren
-            update_document_status(
-                document_id=document_id,
+            get_status_service().update_status(
+                status_id=document_id,
                 status="processing",
                 progress=0,
                 message="Starte Dokumentverarbeitung..."
             )
             
             # Dokument validieren
-            update_document_status(
-                document_id=document_id,
+            get_status_service().update_status(
+                status_id=document_id,
                 status="processing",
                 progress=10,
                 message="Validiere Dokument..."
@@ -154,8 +154,8 @@ class DocumentProcessor:
                 raise ValueError(f"Dokumentvalidierung fehlgeschlagen: {validation_result}")
             
             # PDF verarbeiten
-            update_document_status(
-                document_id=document_id,
+            get_status_service().update_status(
+                status_id=document_id,
                 status="processing",
                 progress=30,
                 message="Extrahiere Text und Metadaten..."
@@ -165,8 +165,8 @@ class DocumentProcessor:
             pdf_result = self.pdf_processor.process_file(
                 filepath,
                 processing_settings,
-                progress_callback=lambda msg, pct: update_document_status(
-                    document_id=document_id,
+                progress_callback=lambda msg, pct: get_status_service().update_status(
+                    status_id=document_id,
                     status="processing",
                     progress=30 + int(pct * 0.5),  # 30% - 80%
                     message=msg
@@ -182,8 +182,8 @@ class DocumentProcessor:
             
             # Status aktualisieren
             if store:
-                update_document_status(
-                    document_id=document_id,
+                get_status_service().update_status(
+                    status_id=document_id,
                     status="processing",
                     progress=85,
                     message="Speichere Chunks in Vektordatenbank..."
@@ -254,8 +254,8 @@ class DocumentProcessor:
             
             # Aktualisiere Status
             status = "completed" if result.success else "completed_with_warnings"
-            update_document_status(
-                document_id=document_id,
+            get_status_service().update_status(
+                status_id=document_id,
                 status=status,
                 progress=100,
                 message=result.message,
@@ -263,7 +263,7 @@ class DocumentProcessor:
             )
             
             # Cleanup Status nach 10 Minuten
-            cleanup_status(document_id, 600)
+            get_status_service().cleanup_status(document_id, 600)
             
             # Garbage Collection
             gc.collect()
@@ -274,8 +274,8 @@ class DocumentProcessor:
             logger.error(f"Fehler bei der Dokumentverarbeitung für {document_id}: {e}", exc_info=True)
             
             # Aktualisiere Status
-            update_document_status(
-                document_id=document_id,
+            get_status_service().update_status(
+                status_id=document_id,
                 status="error",
                 progress=0,
                 message=f"Fehler bei der Dokumentverarbeitung: {str(e)}"
@@ -409,8 +409,8 @@ def process_document_background(filepath: str, document_id: str, metadata: Dict[
         logger.error(f"Fehler bei der Hintergrundverarbeitung für {document_id}: {e}", exc_info=True)
         
         # Fehler in Status melden
-        update_document_status(
-            document_id=document_id,
+        get_status_service().update_status(
+            status_id=document_id,
             status="error",
             progress=0,
             message=f"Fehler bei der Dokumentverarbeitung: {str(e)}"
