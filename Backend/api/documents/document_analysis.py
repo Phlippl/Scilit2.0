@@ -10,7 +10,8 @@ from typing import Dict, Any
 
 # Import services and utilities
 from services.documents.processor import DocumentProcessor
-from utils.helpers import timeout_handler
+from utils.file_utils import cleanup_file
+from utils.performance_utils import timeout_handler  # Updated to use performance_utils
 from services.status_service import get_status_service
 
 # Import metadata retrieval functions
@@ -100,7 +101,7 @@ def analyze_document_background(filepath: str, document_id: str, settings: Dict[
             # Clean up temporary file
             try:
                 if os.path.exists(filepath):
-                    os.unlink(filepath)
+                    cleanup_file(filepath)
                     logger.debug(f"Cleaned up file {filepath} after error")
             except Exception as cleanup_error:
                 logger.error(f"Error deleting temporary file {filepath}: {cleanup_error}")

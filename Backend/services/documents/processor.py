@@ -15,7 +15,7 @@ from flask import current_app
 from services.pdf import get_pdf_processor
 from services.vector_storage import store_document_chunks, delete_document as delete_from_vector_db
 from services.registry import get
-from utils.file_utils import write_json, read_json, get_safe_filepath, cleanup_file
+from utils.file_utils import write_json, read_json, get_safe_filepath, cleanup_file  # Use file_utils consistently
 from utils.error_handler import APIError
 from utils.metadata_utils import format_metadata_for_storage
 from config import config_manager
@@ -247,7 +247,7 @@ class DocumentProcessor:
             # Bereinige Datei, falls gewünscht
             if cleanup_file_after and os.path.exists(filepath):
                 try:
-                    cleanup_file(filepath)
+                    cleanup_file(filepath)  # Use file_utils.cleanup_file
                     logger.debug(f"Datei {filepath} nach Verarbeitung gelöscht")
                 except Exception as e:
                     logger.warning(f"Fehler beim Löschen der Datei {filepath}: {e}")
@@ -304,7 +304,7 @@ class DocumentProcessor:
             # Bereinige Datei bei Fehler, falls gewünscht
             if cleanup_file_after and os.path.exists(filepath):
                 try:
-                    cleanup_file(filepath)
+                    cleanup_file(filepath)  # Use file_utils.cleanup_file
                     logger.debug(f"Datei {filepath} nach Fehler gelöscht")
                 except Exception as cleanup_err:
                     logger.warning(f"Fehler beim Löschen der Datei {filepath}: {cleanup_err}")

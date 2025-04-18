@@ -12,6 +12,9 @@ from werkzeug.exceptions import HTTPException
 import requests
 from typing import Dict, Any, List, Optional, Union, Callable, Tuple
 
+# Import timeout_handler from performance_utils (instead of helpers) if needed
+from utils.performance_utils import timeout_handler
+
 # Logging konfigurieren
 logger = logging.getLogger(__name__)
 

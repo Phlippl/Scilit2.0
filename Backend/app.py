@@ -15,6 +15,7 @@ from config import config_manager
 from services.registry import initialize_services, get
 from services.status_service import initialize_status_service
 from utils.error_handler import configure_error_handlers, APIError
+from utils.file_utils import allowed_file  # Updated to use file_utils
 
 # Verhindere .pyc-Dateien
 sys.dont_write_bytecode = True

@@ -1,107 +1,36 @@
 # Backend/utils/helpers.py
 """
-Various helper functions for the SciLit2.0 backend with centralized implementations
+DEPRECATED: This module is maintained for backward compatibility only.
+Import utilities from their specialized modules instead:
+- File operations: utils.file_utils
+- Performance monitoring: utils.performance_utils
+- Error handling: utils.error_handler
 """
-import re
-import os
 import logging
-import threading
-import time
-import psutil
-import functools
-from flask import current_app
-from werkzeug.utils import secure_filename
-from typing import Optional, Dict, List, Any
-
-# Import refactored utility modules
-from utils.identifier_utils import extract_doi, extract_isbn
-from utils.author_utils import format_authors
-from utils.metadata_utils import format_metadata_for_storage, normalize_date
+from utils.file_utils import allowed_file as file_utils_allowed_file
+from utils.file_utils import get_safe_filepath as file_utils_get_safe_filepath
+from utils.file_utils import cleanup_file as file_utils_cleanup_file
+from utils.performance_utils import timeout_handler as performance_timeout_handler
 
 logger = logging.getLogger(__name__)
 
-def allowed_file(filename: str) -> bool:
+def allowed_file(filename):
     """
-    Check if file extension is allowed
-    
-    Args:
-        filename: The filename
-        
-    Returns:
-        bool: True if file is allowed, else False
+    DEPRECATED: Use utils.file_utils.allowed_file() instead.
     """
-    allowed_extensions = current_app.config.get('ALLOWED_EXTENSIONS', {'pdf'})
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
+    logger.warning("DEPRECATED: helpers.allowed_file() is deprecated. Use file_utils.allowed_file() instead.")
+    return file_utils_allowed_file(filename)
 
-def get_safe_filepath(document_id: str, filename: str) -> str:
+def get_safe_filepath(document_id, filename):
     """
-    Create a safe file path for uploaded files
-    
-    Args:
-        document_id: Document ID
-        filename: Original filename
-        
-    Returns:
-        str: Safe file path
+    DEPRECATED: Use utils.file_utils.get_safe_filepath() instead.
     """
-    # Ensure upload folder exists
-    upload_folder = current_app.config.get('UPLOAD_FOLDER', 'uploads')
-    os.makedirs(upload_folder, exist_ok=True)
-    
-    safe_filename = secure_filename(filename)
-    return os.path.join(upload_folder, f"{document_id}_{safe_filename}")
+    logger.warning("DEPRECATED: helpers.get_safe_filepath() is deprecated. Use file_utils.get_safe_filepath() instead.")
+    return file_utils_get_safe_filepath(document_id, filename)
 
 def timeout_handler(max_seconds=120, cpu_limit=70):
     """
-    Decorator to limit function execution time and CPU usage
-    
-    Args:
-        max_seconds: Maximum execution time in seconds
-        cpu_limit: CPU usage limit in percent
+    DEPRECATED: Use utils.performance_utils.timeout_handler() instead.
     """
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            result = [None]
-            error = [None]
-            
-            def target():
-                try:
-                    result[0] = func(*args, **kwargs)
-                except Exception as e:
-                    error[0] = e
-            
-            # Start function in a separate thread
-            thread = threading.Thread(target=target)
-            thread.daemon = True
-            thread.start()
-            
-            # Monitor execution time and CPU usage
-            start_time = time.time()
-            process = psutil.Process(os.getpid())
-            
-            while thread.is_alive():
-                thread.join(timeout=1.0)
-                elapsed = time.time() - start_time
-                
-                # Check time limit
-                if elapsed > max_seconds:
-                    error[0] = TimeoutError(f"Function execution exceeded {max_seconds} seconds")
-                    break
-                
-                # Check CPU usage
-                try:
-                    cpu_percent = process.cpu_percent(interval=0.5)
-                    if cpu_percent > cpu_limit:
-                        error[0] = Exception(f"CPU usage too high: {cpu_percent}% (limit: {cpu_limit}%)")
-                        break
-                except Exception:
-                    pass
-            
-            if error[0]:
-                raise error[0]
-            
-            return result[0]
-        
-        return wrapper
-    return decorator
+    logger.warning("DEPRECATED: helpers.timeout_handler() is deprecated. Use performance_utils.timeout_handler() instead.")
+    return performance_timeout_handler(max_seconds, cpu_limit)
