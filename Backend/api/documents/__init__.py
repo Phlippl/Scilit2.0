@@ -6,7 +6,6 @@ Package für Dokument-API-Endpunkte und zugehörige Funktionen
 # Import the blueprint from document_api.py
 from .routes import documents_bp
 
-
 from .document_status import (
     update_document_status,
     cleanup_status,
@@ -14,7 +13,10 @@ from .document_status import (
     register_status_callback
 )
 
-from utils.metadata_utils import validate_metadata, format_metadata_for_storage
+from utils.metadata_utils import (
+    validate_metadata, 
+    format_metadata_for_storage
+)
 
 from .document_analysis import (
     analyze_document_background, 
